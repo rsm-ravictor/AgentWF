@@ -414,6 +414,51 @@ button { color: inherit; }
 .approval-empty .icon { color: var(--success); }
 
 .pill-review { background: var(--warn-bg); color: var(--warn); }
+.pill-error { background: var(--danger-bg); color: var(--danger); }
+
+/* ---------- Claude analysis panel ---------- */
+.ai-block {
+  border: 1.5px solid var(--blue);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  margin-bottom: 22px;
+  background: var(--surface);
+}
+.ai-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.ai-head h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; }
+.ai-head .icon { color: var(--blue); }
+
+.ai-block h4 {
+  font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-secondary); margin: 18px 0 8px;
+}
+.ai-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 10px; }
+.ai-meta strong { color: var(--text); font-weight: 600; }
+.ai-warn { color: var(--warn); font-weight: 600; }
+.ai-summary, .ai-reasoning { font-size: 0.88rem; line-height: 1.55; margin: 0; }
+
+.ai-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ai-findings li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; font-size: 0.85rem; }
+.ai-findings .icon { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
+.ai-findings .f-req { font-weight: 500; }
+.ai-findings .f-ev { color: var(--text-secondary); font-size: 0.8rem; margin-top: 3px; font-style: italic; }
+.f-met { background: var(--success-bg); color: var(--success); }
+.f-not-met { background: var(--danger-bg); color: var(--danger); }
+.f-unclear { background: var(--warn-bg); color: var(--warn); }
+.ai-findings .f-req, .ai-findings .f-ev { color: var(--text); }
+.f-met .f-ev, .f-not-met .f-ev, .f-unclear .f-ev { color: var(--text-secondary); }
+
+.ai-fields { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.ai-fields td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.ai-fields td:first-child { color: var(--text-secondary); width: 42%; }
+.ai-fields tr:last-child td { border-bottom: none; }
+
+.ai-missing { margin: 0; padding-left: 18px; font-size: 0.85rem; line-height: 1.6; color: var(--danger); }
+.ai-loading { color: var(--text-secondary); font-size: 0.88rem; padding: 10px 0; }
+.ai-error { color: var(--danger); font-size: 0.86rem; padding: 10px 0; }
+
+.ai-hint { font-size: 0.76rem; color: var(--text-muted); margin: -4px 0 0; line-height: 1.45; }
+.ai-hint-warn { color: var(--warn); }
 
 @media (max-width: 720px) {
   .ap-docs { grid-template-columns: 1fr; }

@@ -3,6 +3,7 @@ __pycache__/
 *.db
 .env
 .env.*
+!.env.example
 uploaded_files/
 redacted_files/
 __pycache__/

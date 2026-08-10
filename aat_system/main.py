@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
+import anthropic
 from fastapi import FastAPI, UploadFile, File, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -14,6 +15,7 @@ from .document_repo import ingest_document, scan_expired_leases, get_or_create_f
 from .config import Division, Role, CORE_FOLDERS
 from .security import authenticate_user, create_access_token, get_current_active_user, get_password_hash
 from .utils import ensure_storage_directories
+from . import llm_analyzer
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -114,6 +116,79 @@ def leases_expired(db: Session = Depends(get_db), current_user: User = Depends(g
 def get_documents(division: Division, folder_name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     documents = db.query(Document).join(Folder).filter(Folder.division == division, Folder.name == folder_name).all()
     return documents
+
+MAX_ANALYZE_BYTES = 20 * 1024 * 1024  # 20 MB — well under the API's 32 MB request cap
+
+@app.get("/analyze/workflows")
+def list_analyzable_workflows():
+    """Workflow IDs the analyzer can grade, plus whether a key is configured."""
+    return {
+        "configured": llm_analyzer.has_api_key(),
+        "model": llm_analyzer.MODEL,
+        "workflows": [
+            {"id": wf_id, "title": rubric["title"], "requirements": rubric["requirements"]}
+            for wf_id, rubric in llm_analyzer.WORKFLOW_RUBRICS.items()
+        ],
+    }
+
+@app.post("/analyze")
+async def analyze_document_endpoint(
+    workflow: str = Form(...),
+    property_id: str = Form(""),
+    unit_id: str = Form(""),
+    upload_file: UploadFile = File(...),
+):
+    """Grade an uploaded document against a workflow's rubric using Claude.
+
+    Prototype endpoint: unauthenticated so the preview UI can exercise it. Put it
+    behind get_current_active_user before this is exposed beyond localhost.
+    """
+    if not llm_analyzer.has_api_key():
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not set. Add it to .env and restart the server.",
+        )
+
+    contents = await upload_file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(contents) > MAX_ANALYZE_BYTES:
+        raise HTTPException(status_code=413, detail="File is larger than the 20 MB limit.")
+
+    media_type = upload_file.content_type or "application/octet-stream"
+    try:
+        verdict = llm_analyzer.analyze_document(
+            workflow_id=workflow,
+            file_bytes=contents,
+            filename=upload_file.filename or "document",
+            media_type=media_type,
+            property_id=property_id,
+            unit_id=unit_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except TypeError as exc:
+        # The SDK raises TypeError at request time when no credential resolved.
+        if "authentication" in str(exc).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="No Anthropic credential resolved. Set ANTHROPIC_API_KEY in .env and restart.",
+            )
+        raise
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=502, detail="Anthropic rejected the API key.")
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Rate limited by Anthropic. Try again shortly.")
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Anthropic API error: {exc.message}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(status_code=502, detail="Could not reach the Anthropic API.")
+
+    return {
+        "workflow": workflow,
+        "filename": upload_file.filename,
+        "verdict": verdict.model_dump(),
+    }
 
 @app.get("/phase2/email-ingestion")
 def email_ingestion_placeholder(current_user: User = Depends(get_current_active_user)):

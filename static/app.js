@@ -110,6 +110,7 @@
     foundDocs: [],
     missingDocs: [],
     uploads: [],
+    lastFile: null,
     running: false,
     approvals: pendingApprovals.slice(),
     expandedApproval: null,
@@ -513,6 +514,9 @@
     });
 
     uploadList.innerHTML = '';
+    state.lastFile = null;
+    if (analyzeBtn) analyzeBtn.disabled = true;
+    if (aiBlock) aiBlock.classList.add('hidden');
     startBtn.disabled = true;
     matchSummary.textContent = 'No run yet';
     matchList.innerHTML = '';
@@ -617,11 +621,133 @@
     const covered = state.uploads.map((u) => u.doc);
     const target = wf.docs.find((d) => !covered.includes(d) && !state.foundDocs.includes(d)) || wf.docs[wf.docs.length - 1];
     state.uploads.push({ name: file.name, doc: target });
+    state.lastFile = file;
     const li = document.createElement('li');
     li.innerHTML = `${iconSvg('i-file')}<span></span>`;
     li.lastElementChild.textContent = `${file.name} → ${target}`;
     uploadList.appendChild(li);
-    toast(`Attached "${file.name}" as ${target}. Re-fetch to include it.`, 'success');
+    if (analyzeBtn) analyzeBtn.disabled = false;
+    toast(`Attached "${file.name}". Analyze it, or re-fetch to include it.`, 'success');
+  }
+
+  // ---------------- Real document analysis (Claude) ----------------
+  const analyzeBtn = qs('#analyze-doc');
+  const aiBlock = qs('#ai-block');
+  const aiBody = qs('#ai-body');
+  const aiDecision = qs('#ai-decision');
+  const aiHint = qs('#ai-hint');
+
+  const DECISION_META = {
+    approve: { label: 'Approve', cls: 'pill-done' },
+    needs_human_review: { label: 'Needs human review', cls: 'pill-review' },
+    reject: { label: 'Reject', cls: 'pill-error' },
+  };
+  const STATUS_META = {
+    met: { icon: 'i-check', cls: 'f-met' },
+    not_met: { icon: 'i-x', cls: 'f-not-met' },
+    unclear: { icon: 'i-info', cls: 'f-unclear' },
+  };
+
+  // Tell the user up front whether the backend has a key configured.
+  fetch('/analyze/workflows')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((info) => {
+      if (info && !info.configured && aiHint) {
+        aiHint.textContent = 'Set ANTHROPIC_API_KEY in .env and restart the server to enable analysis.';
+        aiHint.classList.add('ai-hint-warn');
+      }
+    })
+    .catch(() => {});
+
+  analyzeBtn?.addEventListener('click', async () => {
+    if (!state.selectedWorkflow) return toast('Select a workflow first.', 'error');
+    if (!state.lastFile) return toast('Attach a document first.', 'error');
+
+    const wf = workflows[state.selectedWorkflow];
+    analyzeBtn.disabled = true;
+    setRunPill('running', 'Analyzing');
+    statusDesc.textContent = `Sending ${state.lastFile.name} to Claude…`;
+    logLine(`Analyzing ${state.lastFile.name} against the ${wf.title} rubric.`);
+    aiBlock.classList.remove('hidden');
+    aiDecision.className = 'pill pill-running';
+    aiDecision.textContent = 'Working';
+    aiBody.innerHTML = '<div class="ai-loading">Reading the document and grading it against every requirement…</div>';
+
+    const form = new FormData();
+    form.append('workflow', state.selectedWorkflow);
+    form.append('property_id', propId.value.trim());
+    form.append('unit_id', unitId.value.trim());
+    form.append('upload_file', state.lastFile);
+
+    try {
+      const res = await fetch('/analyze', { method: 'POST', body: form });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.detail || `Request failed (${res.status})`);
+      renderVerdict(payload.verdict);
+      setRunPill('done', 'Analyzed');
+      statusDesc.textContent = 'Analysis complete — review the findings.';
+      logLine(`Verdict: ${payload.verdict.decision} (${payload.verdict.confidence} confidence).`, true);
+      humanActions.classList.remove('hidden');
+      preEmail.value = buildEmail(payload.verdict);
+    } catch (err) {
+      aiDecision.className = 'pill pill-error';
+      aiDecision.textContent = 'Error';
+      aiBody.innerHTML = '<div class="ai-error"></div>';
+      aiBody.firstElementChild.textContent = err.message;
+      setRunPill('idle', 'Idle');
+      statusDesc.textContent = 'Analysis failed.';
+      logLine(`Analysis failed: ${err.message}`);
+      toast(err.message, 'error');
+    } finally {
+      analyzeBtn.disabled = false;
+    }
+  });
+
+  function renderVerdict(v) {
+    const meta = DECISION_META[v.decision] || { label: v.decision, cls: 'pill-idle' };
+    aiDecision.className = `pill ${meta.cls}`;
+    aiDecision.textContent = meta.label;
+
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const findings = (v.findings || []).map((f) => {
+      const s = STATUS_META[f.status] || STATUS_META.unclear;
+      return `<li class="${s.cls}">
+        ${iconSvg(s.icon)}
+        <div>
+          <div class="f-req">${esc(f.requirement)}</div>
+          ${f.evidence ? `<div class="f-ev">“${esc(f.evidence)}”</div>` : ''}
+        </div>
+      </li>`;
+    }).join('');
+
+    const fields = (v.extracted_fields || []).map((f) =>
+      `<tr><td>${esc(f.label)}</td><td>${esc(f.value)}</td></tr>`).join('');
+
+    const missing = (v.missing_information || []).map((m) => `<li>${esc(m)}</li>`).join('');
+
+    aiBody.innerHTML = `
+      <div class="ai-meta">
+        <span><strong>Document:</strong> ${esc(v.document_type)}</span>
+        <span><strong>Confidence:</strong> ${esc(v.confidence)}</span>
+        ${v.is_expected_type ? '' : '<span class="ai-warn">Not the expected document type for this workflow</span>'}
+      </div>
+      <p class="ai-summary">${esc(v.summary)}</p>
+      <h4>Reasoning</h4>
+      <p class="ai-reasoning">${esc(v.reasoning)}</p>
+      <h4>Requirements</h4>
+      <ul class="ai-findings">${findings || '<li class="muted">No findings returned.</li>'}</ul>
+      ${fields ? `<h4>Extracted</h4><table class="ai-fields"><tbody>${fields}</tbody></table>` : ''}
+      ${missing ? `<h4>Missing information</h4><ul class="ai-missing">${missing}</ul>` : ''}
+    `;
+  }
+
+  function buildEmail(v) {
+    const gaps = (v.missing_information || []).join(', ');
+    const unmet = (v.findings || []).filter((f) => f.status !== 'met').map((f) => f.requirement);
+    const items = gaps || unmet.join(', ') || 'None';
+    return `Hello,\n\nWe reviewed the document you provided. Outstanding items: ${items}.\n\nPlease advise or provide the missing documentation at your earliest convenience.\n\nThanks,\nAAT Agent`;
   }
 
   // ---------------- Run simulation ----------------

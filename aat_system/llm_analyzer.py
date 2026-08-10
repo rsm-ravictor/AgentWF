@@ -1,0 +1,238 @@
+"""LLM-backed document analysis.
+
+Sends an uploaded document to Claude and gets back a structured, machine-readable
+verdict (approve / needs human review / reject) plus per-requirement findings.
+
+The schema is enforced by the API via structured outputs, so the response is
+always valid against DocumentVerdict — no prompt-level "please return JSON".
+"""
+
+import base64
+import os
+from typing import List, Literal, Optional
+
+import anthropic
+from pydantic import BaseModel, Field
+
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+
+# Requirements each workflow checks a document against. These are the rubric the
+# model grades against — keep them concrete and checkable.
+WORKFLOW_RUBRICS = {
+    "vendor-insurance": {
+        "title": "Vendor Insurance",
+        "document_kinds": "vendor certificate of insurance (COI), AAT requirements document",
+        "requirements": [
+            "Certificate is currently active (today falls between the policy effective and expiration dates)",
+            "General liability limit is at least $2,000,000 per occurrence",
+            "AAT is named as an additional insured",
+            "Workers compensation coverage is present",
+            "The named insured matches the vendor on file",
+        ],
+    },
+    "renters-insurance": {
+        "title": "Renter's Insurance",
+        "document_kinds": "tenant renter's insurance policy or certificate, lease agreement",
+        "requirements": [
+            "Policy is currently active (today falls within the coverage period)",
+            "Personal liability coverage is at least $100,000",
+            "The property management company is listed as an additional interest or additional insured",
+            "The named insured matches the tenant on the lease",
+            "The insured address matches the leased unit",
+        ],
+    },
+    "lease-checklist": {
+        "title": "Lease & File Checklist",
+        "document_kinds": "lease agreement, addenda/riders, file checklist",
+        "requirements": [
+            "Lease is signed and dated by both tenant and landlord/agent",
+            "Lease term start and end dates are present and unambiguous",
+            "Monthly rent amount and due date are stated",
+            "Security deposit amount is stated",
+            "All referenced addenda or riders are attached",
+        ],
+    },
+    "breach-notice": {
+        "title": "Breach Notice",
+        "document_kinds": "tenant lease, violation report, prior breach history",
+        "requirements": [
+            "The specific lease section allegedly breached is cited",
+            "The factual conduct constituting the breach is described with dates",
+            "The cure period or remedy required is stated",
+            "Tenant name and unit are identified and match the lease",
+            "The notice is dated and identifies who issued it",
+        ],
+    },
+    "security-report": {
+        "title": "Security Report",
+        "document_kinds": "daily activity report, incident log",
+        "requirements": [
+            "Report covers a clearly stated date and time range",
+            "Each flagged incident has a time, location, and description",
+            "Incidents involving injury, police, or property damage are clearly marked",
+            "The reporting officer or source is identified",
+            "Any follow-up action required is stated",
+        ],
+    },
+}
+
+
+class Finding(BaseModel):
+    """One requirement, graded."""
+
+    requirement: str = Field(description="The requirement being checked, restated briefly.")
+    status: Literal["met", "not_met", "unclear"] = Field(
+        description="'met' if the document clearly satisfies it, 'not_met' if it clearly does not, "
+        "'unclear' if the document does not contain enough information to tell."
+    )
+    evidence: str = Field(
+        description="Short quote or specific reference from the document supporting the status. "
+        "Empty string if the document says nothing about this requirement."
+    )
+
+
+class ExtractedField(BaseModel):
+    """A key data point pulled off the document."""
+
+    label: str = Field(description="What the value is, e.g. 'Policy number', 'Effective date'.")
+    value: str = Field(description="The value exactly as it appears in the document.")
+
+
+class DocumentVerdict(BaseModel):
+    """The full structured decision returned to the UI."""
+
+    document_type: str = Field(description="What this document actually appears to be.")
+    is_expected_type: bool = Field(
+        description="True if the document is the kind of document this workflow expects."
+    )
+    summary: str = Field(description="Two or three sentences on what the document contains.")
+    decision: Literal["approve", "needs_human_review", "reject"] = Field(
+        description="'approve' only if every requirement is met and nothing is ambiguous. "
+        "'reject' if a requirement is clearly not met. "
+        "'needs_human_review' if anything is unclear, missing, or a judgment call."
+    )
+    confidence: Literal["high", "medium", "low"] = Field(
+        description="Your confidence in the decision, given document quality and completeness."
+    )
+    reasoning: str = Field(description="Why you reached this decision, in a few sentences.")
+    findings: List[Finding] = Field(description="One entry per requirement in the rubric.")
+    extracted_fields: List[ExtractedField] = Field(
+        description="Key data points from the document: names, dates, amounts, policy numbers."
+    )
+    missing_information: List[str] = Field(
+        description="Anything a reviewer would need that this document does not contain."
+    )
+
+
+SYSTEM_PROMPT = """You review property-management documents for AAT, a real estate asset \
+and lease management company. You grade a single uploaded document against a fixed rubric \
+and return a structured verdict.
+
+Ground every finding in what the document actually says. If the document does not contain \
+the information a requirement asks about, mark that requirement 'unclear' and say so in \
+missing_information — do not infer it, and do not treat absence as satisfaction.
+
+Reserve 'approve' for documents where every requirement is met and nothing is ambiguous. \
+Anything that turns on a judgment call, or where a date or amount is close to a threshold, \
+belongs in 'needs_human_review'. A human signs off on the final decision; your job is to do \
+the reading and make the call auditable, not to clear things through."""
+
+
+def _client() -> anthropic.Anthropic:
+    return anthropic.Anthropic()
+
+
+def has_api_key() -> bool:
+    """Whether a credential actually resolved, so the UI can warn before a run.
+
+    The client constructor does not raise on missing credentials — it fails at
+    request time — so inspect the resolved values rather than construction.
+    """
+    try:
+        client = _client()
+    except Exception:
+        return False
+    return bool(
+        getattr(client, "api_key", None)
+        or getattr(client, "auth_token", None)
+        or os.getenv("ANTHROPIC_API_KEY")
+        or os.getenv("ANTHROPIC_AUTH_TOKEN")
+    )
+
+
+def _document_block(file_bytes: bytes, media_type: str) -> dict:
+    """Build the content block for the uploaded file."""
+    if media_type == "application/pdf":
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.standard_b64encode(file_bytes).decode("utf-8"),
+            },
+        }
+    if media_type in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.standard_b64encode(file_bytes).decode("utf-8"),
+            },
+        }
+    # Plain text, markdown, csv — inline it.
+    text = file_bytes.decode("utf-8", errors="replace")
+    return {"type": "text", "text": f"<document>\n{text}\n</document>"}
+
+
+def analyze_document(
+    workflow_id: str,
+    file_bytes: bytes,
+    filename: str,
+    media_type: str,
+    property_id: Optional[str] = None,
+    unit_id: Optional[str] = None,
+) -> DocumentVerdict:
+    """Grade one document against a workflow's rubric.
+
+    Raises ValueError for an unknown workflow, and lets anthropic.* errors
+    propagate so the API layer can map them to status codes.
+    """
+    rubric = WORKFLOW_RUBRICS.get(workflow_id)
+    if rubric is None:
+        raise ValueError(f"Unknown workflow: {workflow_id}")
+
+    requirements = "\n".join(f"{i}. {r}" for i, r in enumerate(rubric["requirements"], 1))
+    context_lines = [f"Workflow: {rubric['title']}", f"Uploaded file: {filename}"]
+    if property_id:
+        context_lines.append(f"Property ID on file: {property_id}")
+    if unit_id:
+        context_lines.append(f"Unit on file: {unit_id}")
+
+    instructions = (
+        "\n".join(context_lines)
+        + f"\n\nThis workflow expects: {rubric['document_kinds']}."
+        + f"\n\nGrade the attached document against these requirements:\n{requirements}\n\n"
+        "Return one finding per numbered requirement, in order."
+    )
+
+    response = _client().messages.parse(
+        model=MODEL,
+        max_tokens=16000,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    _document_block(file_bytes, media_type),
+                    {"type": "text", "text": instructions},
+                ],
+            }
+        ],
+        output_format=DocumentVerdict,
+    )
+
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to analyze this document.")
+
+    return response.parsed_output
