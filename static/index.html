@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AAT — Access Agent Toolkit</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+
+    <!-- ============ SCREEN 1: LOGIN ============ -->
+    <section id="screen-login" class="screen login-screen">
+      <div class="login-card">
+        <div class="login-brand">
+          <div class="logo-mark">A</div>
+          <h1>Access Agent Toolkit</h1>
+          <p>Sign in to continue</p>
+        </div>
+
+        <div class="division-picker" id="division-picker">
+          <button type="button" class="division-option" data-division="retail">
+            <span class="d-icon">🏬</span>
+            <span class="d-title">Retail / Office</span>
+            <span class="d-sub">Executive &amp; Operations</span>
+          </button>
+          <button type="button" class="division-option" data-division="mf">
+            <span class="d-icon">🏢</span>
+            <span class="d-title">Multifamily</span>
+            <span class="d-sub">Property &amp; Community</span>
+          </button>
+        </div>
+
+        <form id="login-form">
+          <div class="field">
+            <label for="login-user">Username</label>
+            <input id="login-user" type="text" autocomplete="username" placeholder="you@company.com" />
+          </div>
+          <div class="field">
+            <label for="login-pass">Password</label>
+            <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••" />
+          </div>
+          <p class="login-error" id="login-error"></p>
+          <button type="submit" class="btn btn-primary btn-block" id="login-submit">Sign in</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ SCREEN 2: DASHBOARD ============ -->
+    <section id="screen-dashboard" class="screen hidden">
+      <header class="app-nav">
+        <div class="app-nav-left">
+          <div class="nav-brand"><div class="logo-mark small">A</div> AAT</div>
+          <nav class="nav-tabs">
+            <button class="nav-tab active" data-target="dashboard">Dashboard</button>
+            <button class="nav-tab" data-target="usecases">Use Cases</button>
+          </nav>
+        </div>
+        <div class="app-nav-right">
+          <span class="division-badge js-division-badge">—</span>
+          <span class="user-chip js-user-name">—</span>
+          <button class="btn btn-text signout-btn">Sign out</button>
+        </div>
+      </header>
+
+      <main class="app-main">
+        <div class="dash-greeting">
+          <h1 id="dashboard-greeting">Welcome</h1>
+          <p id="dashboard-subtitle">Here's what's happening across your repository today.</p>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-tile">
+            <div class="stat-value" id="stat-usecases">0</div>
+            <div class="stat-label">Use cases available</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-value" id="stat-documents">0</div>
+            <div class="stat-label">Documents in repository</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-value" id="stat-leases">0</div>
+            <div class="stat-label">Leases expiring soon</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-value" id="stat-pending">0</div>
+            <div class="stat-label">Pending human review</div>
+          </div>
+        </div>
+
+        <div class="section-heading">
+          <h2>Use cases to review</h2>
+          <p>Pick one to fetch documents and run the process</p>
+        </div>
+        <div class="review-grid" id="review-grid"></div>
+      </main>
+    </section>
+
+    <!-- ============ SCREEN 3: USE CASES ============ -->
+    <section id="screen-usecases" class="screen hidden">
+      <header class="app-nav">
+        <div class="app-nav-left">
+          <div class="nav-brand"><div class="logo-mark small">A</div> AAT</div>
+          <nav class="nav-tabs">
+            <button class="nav-tab" data-target="dashboard">Dashboard</button>
+            <button class="nav-tab active" data-target="usecases">Use Cases</button>
+          </nav>
+        </div>
+        <div class="app-nav-right">
+          <span class="division-badge js-division-badge">—</span>
+          <span class="user-chip js-user-name">—</span>
+          <button class="btn btn-text signout-btn">Sign out</button>
+        </div>
+      </header>
+
+      <main class="app-main">
+        <nav class="uc-bar" id="usecase-bar">
+          <button class="uc-chip" data-id="lease-compare">Lease Compare</button>
+          <button class="uc-chip" data-id="renewal-prep">Renewal Prep</button>
+          <button class="uc-chip" data-id="insurance-check">Insurance Check</button>
+          <button class="uc-chip" data-id="tenant-verify">Tenant Verify</button>
+          <button class="uc-chip" data-id="doc-validate">Document Validate</button>
+        </nav>
+
+        <div class="uc-layout">
+          <aside class="uc-panel">
+            <h2 id="uc-title">Select a use case</h2>
+            <p class="uc-desc" id="uc-desc">Choose a use case above to see required documents and actions.</p>
+
+            <h4>Required documents</h4>
+            <ul class="uc-doclist" id="uc-docs"></ul>
+
+            <h4>Search</h4>
+            <div class="field">
+              <label for="prop-id">Property ID</label>
+              <input id="prop-id" placeholder="e.g. RES-001" />
+            </div>
+            <div class="field">
+              <label for="unit-id">Unit #</label>
+              <input id="unit-id" placeholder="e.g. 12A" />
+            </div>
+
+            <div class="uc-actions">
+              <button id="fetch-docs" class="btn btn-secondary">Fetch Needed Docs</button>
+              <button id="manual-upload" class="btn btn-secondary">Manual Upload</button>
+              <input id="manual-upload-input" type="file" class="hidden" />
+              <button id="start-process" class="btn btn-primary" disabled>Start Process</button>
+            </div>
+          </aside>
+
+          <section class="workspace">
+            <div class="process-track" id="uc-status-steps">
+              <div class="p-step">1</div><div class="p-connector"></div>
+              <div class="p-step">2</div><div class="p-connector"></div>
+              <div class="p-step">3</div><div class="p-connector"></div>
+              <div class="p-step">4</div><div class="p-connector"></div>
+              <div class="p-step">5</div>
+            </div>
+            <div class="status-line">
+              <div class="status-text" id="uc-status-desc">Idle</div>
+            </div>
+
+            <div class="results-block" id="uc-results">
+              <h3>Results</h3>
+              <div class="match-summary" id="match-summary">No run yet</div>
+              <div class="match-columns" id="match-list"></div>
+
+              <div class="human-actions hidden" id="human-actions">
+                <h4>Human in the loop</h4>
+                <textarea id="pre-email" rows="4">Hello,
+
+We attempted to fetch the required documents. Missing: [MISSING]. Please advise or provide them.
+
+Thanks,
+AAT Agent</textarea>
+                <div class="human-buttons">
+                  <button id="send-email" class="btn btn-secondary">Send Email</button>
+                  <button id="sign-off" class="btn btn-primary">Sign Off &amp; Store</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </section>
+
+    <div class="toast-wrap" id="toast-wrap"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

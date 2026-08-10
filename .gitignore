@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.db
+.env
+.env.*
+uploaded_files/
+redacted_files/
+__pycache__/
+.idea/
+.vscode/
+*.log
+.venv/
+repository/
