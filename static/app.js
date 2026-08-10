@@ -56,6 +56,43 @@
     { name: 'AAT Company Requirements', count: 6 },
   ];
 
+  // Cases the agent has run that are queued for a human decision.
+  const pendingApprovals = [
+    {
+      id: 'AP-2041',
+      workflow: 'vendor-insurance',
+      property: 'RES-014',
+      unit: 'Common area',
+      subject: 'Brightline Landscaping — COI renewal',
+      raised: '12 min ago',
+      reason: 'General liability limit is $1M; AAT requirements specify $2M minimum.',
+      found: ['Vendor insurance certificate'],
+      missing: ['AAT requirements document'],
+    },
+    {
+      id: 'AP-2038',
+      workflow: 'renters-insurance',
+      property: 'RES-006',
+      unit: '3B',
+      subject: 'Tenant policy missing additional insured',
+      raised: '1 hr ago',
+      reason: 'Submitted policy does not list AAT as additional insured, as the lease requires.',
+      found: ['Lease agreement', 'Submitted insurance policy'],
+      missing: ['Tenant checklist'],
+    },
+    {
+      id: 'AP-2035',
+      workflow: 'breach-notice',
+      property: 'RES-009',
+      unit: '8C',
+      subject: 'Draft breach notice — noise violations',
+      raised: '3 hr ago',
+      reason: 'Third documented violation; drafted notice cites lease §12.4 and needs management sign-off before sending.',
+      found: ['Tenant lease', 'Violation report', 'Prior breach history'],
+      missing: [],
+    },
+  ];
+
   const recentActivity = [
     { icon: 'i-shield', text: 'Vendor Insurance verdict stored for RES-014 — compliant', time: '12 min ago' },
     { icon: 'i-alert', text: 'Breach notice for unit 8C queued for management review', time: '1 hr ago' },
@@ -74,6 +111,9 @@
     missingDocs: [],
     uploads: [],
     running: false,
+    approvals: pendingApprovals.slice(),
+    expandedApproval: null,
+    reviewingApproval: null,
   };
 
   const EMAIL_TEMPLATE = 'Hello,\n\nWe attempted to fetch the required documents for this workflow. Missing: [MISSING]. Please advise or provide them at your earliest convenience.\n\nThanks,\nAAT Agent';
@@ -203,7 +243,9 @@
     qs('#stat-workflows').textContent = Object.keys(workflows).length;
     qs('#stat-documents').textContent = folders.reduce((sum, f) => sum + f.count, 0);
     qs('#stat-leases').textContent = 3;
-    qs('#stat-pending').textContent = 2;
+    qs('#stat-pending').textContent = state.approvals.length;
+
+    renderApprovals();
 
     const grid = qs('#review-grid');
     grid.innerHTML = '';
@@ -246,6 +288,147 @@
       list.appendChild(li);
     });
   }
+
+  // ---------------- Approvals queue ----------------
+  function renderApprovals() {
+    const list = qs('#approval-list');
+    list.innerHTML = '';
+
+    if (!state.approvals.length) {
+      const li = document.createElement('li');
+      li.className = 'approval-empty';
+      li.innerHTML = `${iconSvg('i-check')}<span>Nothing awaiting your approval. You're all caught up.</span>`;
+      list.appendChild(li);
+      return;
+    }
+
+    state.approvals.forEach((ap) => {
+      const wf = workflows[ap.workflow];
+      const expanded = state.expandedApproval === ap.id;
+      const li = document.createElement('li');
+      li.className = `approval-item${expanded ? ' expanded' : ''}`;
+
+      const head = document.createElement('button');
+      head.className = 'approval-head';
+      head.setAttribute('aria-expanded', String(expanded));
+      head.setAttribute('aria-controls', `ap-body-${ap.id}`);
+      head.innerHTML = `
+        <span class="ap-icon">${iconSvg(wf.icon)}</span>
+        <span class="ap-main">
+          <span class="ap-subject"></span>
+          <span class="ap-meta"></span>
+        </span>
+        <span class="ap-flag">${ap.missing.length ? `${ap.missing.length} missing` : 'Ready'}</span>
+        <span class="ap-chevron">${iconSvg('i-chevron')}</span>
+      `;
+      head.querySelector('.ap-subject').textContent = ap.subject;
+      head.querySelector('.ap-meta').textContent = `${wf.title} · ${ap.property} / ${ap.unit} · ${ap.raised}`;
+      head.querySelector('.ap-flag').classList.add(ap.missing.length ? 'flag-warn' : 'flag-ok');
+      head.addEventListener('click', () => {
+        state.expandedApproval = expanded ? null : ap.id;
+        renderApprovals();
+      });
+
+      const body = document.createElement('div');
+      body.className = 'approval-body';
+      body.id = `ap-body-${ap.id}`;
+      if (!expanded) body.classList.add('hidden');
+
+      const docItem = (text, icon) => `<li>${iconSvg(icon)}<span>${text}</span></li>`;
+      body.innerHTML = `
+        <div class="ap-reason"><strong>Why it needs you:</strong> <span class="ap-reason-text"></span></div>
+        <div class="ap-docs">
+          <div>
+            <h4>Found</h4>
+            <ul class="found-list">${ap.found.map((d) => docItem(d, 'i-check')).join('') || docItem('None', 'i-info')}</ul>
+          </div>
+          <div>
+            <h4>Missing</h4>
+            <ul class="missing-list">${ap.missing.map((d) => docItem(d, 'i-x')).join('') || docItem('None', 'i-info')}</ul>
+          </div>
+        </div>
+        <div class="ap-actions">
+          <button class="btn btn-primary btn-sm" data-ap-open="${ap.id}">
+            Review in workflow <svg class="icon"><use href="#i-arrow-right"/></svg>
+          </button>
+          <button class="btn btn-secondary btn-sm" data-ap-approve="${ap.id}">Approve &amp; store</button>
+          <button class="btn btn-text btn-sm" data-ap-return="${ap.id}">Send back</button>
+        </div>
+      `;
+      body.querySelector('.ap-reason-text').textContent = ap.reason;
+
+      li.appendChild(head);
+      li.appendChild(body);
+      list.appendChild(li);
+    });
+
+    qsa('[data-ap-open]', list).forEach((btn) => btn.addEventListener('click', () => openApprovalInWorkflow(btn.dataset.apOpen)));
+    qsa('[data-ap-approve]', list).forEach((btn) => btn.addEventListener('click', () => resolveApproval(btn.dataset.apApprove, 'approved')));
+    qsa('[data-ap-return]', list).forEach((btn) => btn.addEventListener('click', () => resolveApproval(btn.dataset.apReturn, 'returned')));
+  }
+
+  // Deep-link an approval into the Workflows view, pre-loaded with its context.
+  function openApprovalInWorkflow(apId) {
+    const ap = state.approvals.find((a) => a.id === apId);
+    if (!ap) return;
+    if (state.running) return toast('Wait for the current run to finish.', 'error');
+
+    switchView('workflows');
+    selectWorkflow(ap.workflow);
+
+    propId.value = ap.property;
+    unitId.value = ap.unit;
+    state.foundDocs = ap.found.slice();
+    state.missingDocs = ap.missing.slice();
+    state.reviewingApproval = ap.id;
+
+    renderMatches();
+    runLog.innerHTML = '';
+    logLine(`Opened ${ap.id} — ${ap.subject}`);
+    logLine(`${ap.property} / ${ap.unit} · ${ap.reason}`);
+    logLine(`Found ${ap.found.length} of ${workflows[ap.workflow].docs.length} required documents.`, ap.missing.length === 0);
+    if (ap.missing.length) logLine(`Missing: ${ap.missing.join(', ')}`);
+
+    statusDesc.textContent = `Reviewing ${ap.id} — awaiting your decision.`;
+    setRunPill('review', 'Needs approval');
+    startBtn.disabled = false;
+
+    humanActions.classList.remove('hidden');
+    preEmail.value = EMAIL_TEMPLATE.replace('[MISSING]', ap.missing.length ? ap.missing.join(', ') : 'None');
+
+    qs('#view-workflows').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    toast(`Loaded ${ap.id} for review.`, 'info');
+  }
+
+  function resolveApproval(apId, outcome) {
+    const ap = state.approvals.find((a) => a.id === apId);
+    if (!ap) return;
+    state.approvals = state.approvals.filter((a) => a.id !== apId);
+    if (state.expandedApproval === apId) state.expandedApproval = null;
+    if (state.reviewingApproval === apId) state.reviewingApproval = null;
+
+    recentActivity.unshift({
+      icon: outcome === 'approved' ? 'i-check' : 'i-mail',
+      text: outcome === 'approved'
+        ? `${ap.id} approved and stored — ${ap.subject}`
+        : `${ap.id} sent back for correction — ${ap.subject}`,
+      time: 'Just now',
+    });
+
+    renderDashboard();
+    toast(
+      outcome === 'approved' ? `${ap.id} approved and stored.` : `${ap.id} sent back for correction.`,
+      outcome === 'approved' ? 'success' : 'info'
+    );
+  }
+
+  qs('#stat-pending-tile').addEventListener('click', () => {
+    switchView('dashboard');
+    const section = qs('#approvals-section');
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    section.classList.add('flash');
+    setTimeout(() => section.classList.remove('flash'), 1200);
+  });
 
   qs('#phase2-notify').addEventListener('click', () => {
     toast("You'll be notified when email ingestion ships in Phase 2.", 'success');
@@ -313,6 +496,7 @@
     state.foundDocs = [];
     state.missingDocs = [];
     state.uploads = [];
+    state.reviewingApproval = null;
 
     qsa('.uc-chip').forEach((c) => c.classList.toggle('selected', c.dataset.id === id));
     ucTitle.textContent = wf.title;
@@ -488,12 +672,29 @@
     toast(`${wf.title} run complete.`, 'success');
   }
 
-  qs('#send-email').addEventListener('click', () => toast('Email sent (simulated).', 'success'));
+  qs('#send-email').addEventListener('click', () => {
+    if (state.reviewingApproval) {
+      const id = state.reviewingApproval;
+      logLine(`Correction email sent for ${id}.`);
+      resolveApproval(id, 'returned');
+      humanActions.classList.add('hidden');
+      setRunPill('idle', 'Sent back');
+      return;
+    }
+    toast('Email sent (simulated).', 'success');
+  });
+
   qs('#sign-off').addEventListener('click', () => {
-    toast('Signed off and stored to the repository (simulated).', 'success');
     humanActions.classList.add('hidden');
     setRunPill('done', 'Stored');
+    if (state.reviewingApproval) {
+      const id = state.reviewingApproval;
+      logLine(`${id} approved — documents stored.`, true);
+      resolveApproval(id, 'approved');
+      return;
+    }
     logLine('Signed off — documents stored.', true);
+    toast('Signed off and stored to the repository (simulated).', 'success');
   });
 
   // ---------------- Boot ----------------
