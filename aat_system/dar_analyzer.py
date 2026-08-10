@@ -277,4 +277,6 @@ def analyze_dar(
             "repeat_units": sum(1 for r in rows if r.occurrences > 1),
         },
         "highlight_semantics": HIGHLIGHT_SEMANTICS,
+        # Raw model objects, for the caller to persist. Not JSON-serialized here.
+        "_incidents": extraction.incidents,
     }

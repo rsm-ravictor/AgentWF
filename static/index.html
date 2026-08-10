@@ -80,6 +80,7 @@
           <nav class="nav-tabs" aria-label="Primary">
             <button class="nav-tab active" data-target="dashboard">Dashboard</button>
             <button class="nav-tab" data-target="workflows">Workflows</button>
+            <button class="nav-tab" data-target="register">Incident Log</button>
           </nav>
         </div>
         <div class="app-nav-right">
@@ -254,6 +255,31 @@
             </div>
           </section>
         </div>
+      </main>
+
+      <!-- ============ INCIDENT LOG (standing register) ============ -->
+      <main class="app-main view hidden" id="view-register">
+        <div class="dash-greeting">
+          <h1>Incident log</h1>
+          <p>Every unit ever written up, across all uploaded Daily Activity Reports.</p>
+        </div>
+
+        <div class="reg-toolbar">
+          <div class="field reg-filter">
+            <label for="reg-property">Filter by property ID</label>
+            <input id="reg-property" placeholder="e.g. RES-014 — blank for all" />
+          </div>
+          <button class="btn btn-secondary btn-sm" id="reg-refresh">Refresh</button>
+          <button class="btn btn-secondary btn-sm" id="reg-csv">Export CSV</button>
+        </div>
+
+        <div id="reg-body"></div>
+
+        <div class="section-heading">
+          <h2>Reports uploaded</h2>
+          <p id="reg-report-count"></p>
+        </div>
+        <div class="list-card" id="reg-reports"></div>
       </main>
     </div>
 

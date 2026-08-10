@@ -113,6 +113,7 @@
     uploads: [],
     lastFile: null,
     lastDar: null,
+    register: null,
     running: false,
     approvals: pendingApprovals.slice(),
     expandedApproval: null,
@@ -233,7 +234,9 @@
   function switchView(name) {
     qs('#view-dashboard').classList.toggle('hidden', name !== 'dashboard');
     qs('#view-workflows').classList.toggle('hidden', name !== 'workflows');
+    qs('#view-register').classList.toggle('hidden', name !== 'register');
     qsa('.nav-tab').forEach((t) => t.classList.toggle('active', t.dataset.target === name));
+    if (name === 'register') loadRegister();
   }
 
   // ---------------- Dashboard ----------------
@@ -699,6 +702,12 @@
         if (!payload.report.highlights_detected) {
           logLine('No colour highlighting was visible — extracted all violation rows instead.');
         }
+        if (payload.saved) {
+          logLine(`Saved to the incident log as report #${payload.report_id}.`, true);
+        } else if (payload.save_error) {
+          logLine(payload.save_error);
+          toast(payload.save_error, 'error');
+        }
       } else {
         renderVerdict(payload.verdict);
         setRunPill('done', 'Analyzed');
@@ -903,6 +912,173 @@
     a.click();
     URL.revokeObjectURL(url);
     toast('CSV downloaded.', 'success');
+  }
+
+  // ---------------- Incident log (standing register) ----------------
+  const regBody = qs('#reg-body');
+  const regReports = qs('#reg-reports');
+  const regProperty = qs('#reg-property');
+
+  qs('#reg-refresh')?.addEventListener('click', () => loadRegister());
+  regProperty?.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRegister(); });
+  qs('#reg-csv')?.addEventListener('click', () => {
+    if (!state.register || !state.register.units.length) return toast('Nothing to export yet.', 'error');
+    exportDarCsv(state.register);
+  });
+
+  async function loadRegister() {
+    if (!regBody) return;
+    regBody.innerHTML = '<div class="ai-loading">Loading incident log…</div>';
+    const prop = (regProperty?.value || '').trim();
+    try {
+      const [regRes, repRes] = await Promise.all([
+        fetch(`/dar/register${prop ? `?property_id=${encodeURIComponent(prop)}` : ''}`),
+        fetch('/dar/reports'),
+      ]);
+      if (!regRes.ok) throw new Error(`Register request failed (${regRes.status})`);
+      const reg = await regRes.json();
+      const reps = repRes.ok ? await repRes.json() : { reports: [] };
+      // report_date is absent on the register payload; renderDar reads it for the CSV name.
+      reg.report = reg.report || { report_date: '' };
+      state.register = reg;
+      renderRegister(reg);
+      renderReportLog(reps.reports || []);
+    } catch (err) {
+      regBody.innerHTML = '<div class="ai-error"></div>';
+      regBody.firstElementChild.textContent = err.message;
+    }
+  }
+
+  function renderRegister(reg) {
+    const { units, totals } = reg;
+
+    if (!units.length) {
+      regBody.innerHTML = `
+        <div class="reg-empty">
+          ${iconSvg('i-clipboard', 'big')}
+          <h3>No incidents logged yet</h3>
+          <p>Upload a Daily Activity Report from the <strong>Workflows</strong> tab and analyze it.
+          Every highlighted incident is stored here, so a unit's first violation date is tracked
+          across reports rather than only within one upload.</p>
+          <button class="btn btn-primary btn-sm" id="reg-goto-dar">Go to Daily Activity Report</button>
+        </div>`;
+      qs('#reg-goto-dar', regBody)?.addEventListener('click', () => {
+        switchView('workflows');
+        selectWorkflow('security-report');
+      });
+      return;
+    }
+
+    const rows = units.map((u, i) => {
+      const tri = TRIAGE_META[u.triage] || TRIAGE_META.note_only;
+      const kw = u.keywords.map((k) => `<span class="kw">${esc(k)}</span>`).join('');
+      return `
+        <tr class="dar-row hl-${esc(u.worst_highlight)}">
+          <td class="c-unit">
+            <button class="unit-toggle" data-rtoggle="${i}" aria-expanded="false">
+              ${iconSvg('i-chevron', 'ut-chev')}<strong>${esc(u.unit)}</strong>
+            </button>
+          </td>
+          <td class="c-date">${esc(u.first_violation_date) || '—'}</td>
+          <td class="c-date">${esc(u.latest_violation_date) || '—'}</td>
+          <td class="c-count">${u.occurrences}${u.occurrences > 1 ? '<span class="repeat-flag">repeat</span>' : ''}</td>
+          <td class="c-triage"><span class="tri ${tri.cls}">${tri.label}</span></td>
+          <td class="c-kw">${kw}</td>
+        </tr>
+        <tr class="dar-detail hidden" data-rdetail="${i}">
+          <td colspan="6">
+            ${u.incidents.map((inc, j) => {
+              const src = (u.sources || [])[j];
+              return `
+              <div class="inc hl-${esc(inc.highlight)}">
+                <div class="inc-head">
+                  <strong>${esc(inc.category)}</strong>
+                  <span class="inc-when">${esc(inc.date)}${inc.time ? ' · ' + esc(inc.time) : ''}</span>
+                  ${inc.lease_relevant ? '<span class="inc-lease">lease-relevant</span>' : ''}
+                  ${src && src.filename ? `<span class="inc-src">from ${esc(src.filename)}</span>` : ''}
+                </div>
+                <div class="inc-snip">${esc(inc.snippet)}</div>
+                <div class="inc-kw">${inc.keywords.map((k) => `<span class="kw">${esc(k)}</span>`).join('')}</div>
+              </div>`;
+            }).join('')}
+          </td>
+        </tr>`;
+    }).join('');
+
+    regBody.innerHTML = `
+      <div class="dar-totals">
+        <div><span class="dt-num">${totals.units_affected}</span><span class="dt-lbl">units</span></div>
+        <div><span class="dt-num">${totals.incidents}</span><span class="dt-lbl">incidents</span></div>
+        <div class="dt-esc"><span class="dt-num">${totals.escalate}</span><span class="dt-lbl">escalate</span></div>
+        <div class="dt-watch"><span class="dt-num">${totals.watch}</span><span class="dt-lbl">watch</span></div>
+        <div><span class="dt-num">${totals.repeat_units}</span><span class="dt-lbl">repeat</span></div>
+        <div><span class="dt-num">${totals.reports}</span><span class="dt-lbl">reports</span></div>
+      </div>
+      <div class="dar-scroll">
+        <table class="dar-table">
+          <thead>
+            <tr><th>Unit</th><th>1st violation</th><th>Latest</th><th>#</th><th>Triage</th><th>Keywords</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p class="dar-legend">
+        <span class="lg hl-red"></span> red — escalate
+        <span class="lg hl-yellow"></span> yellow — watch, escalates on recurrence
+      </p>`;
+
+    qsa('[data-rtoggle]', regBody).forEach((btn) => btn.addEventListener('click', () => {
+      const d = qs(`[data-rdetail="${btn.dataset.rtoggle}"]`, regBody);
+      const open = !d.classList.contains('hidden');
+      d.classList.toggle('hidden', open);
+      btn.classList.toggle('open', !open);
+      btn.setAttribute('aria-expanded', String(!open));
+    }));
+  }
+
+  function renderReportLog(reports) {
+    qs('#reg-report-count').textContent = reports.length
+      ? `${reports.length} report${reports.length === 1 ? '' : 's'}`
+      : '';
+
+    if (!reports.length) {
+      regReports.innerHTML = '<div class="empty-state">No reports uploaded yet.</div>';
+      return;
+    }
+
+    regReports.innerHTML = reports.map((r) => `
+      <div class="case-row">
+        <div class="case-id">${esc(r.report_date || '—')}</div>
+        <div class="rep-file">${iconSvg('i-file')}<span>${esc(r.filename)}</span></div>
+        <div class="row-spacer">
+          <span class="rep-meta">
+            ${r.property_name ? esc(r.property_name) + ' · ' : ''}${r.incident_count} incident${r.incident_count === 1 ? '' : 's'}
+            ${r.units.length ? ' · units ' + esc(r.units.slice(0, 6).join(', ')) + (r.units.length > 6 ? '…' : '') : ''}
+            ${r.highlights_detected ? '' : ' · <span class="rep-nohl">no highlighting detected</span>'}
+          </span>
+        </div>
+        <div class="rep-sev">
+          ${r.severity_counts.red ? `<span class="sev sev-red">${r.severity_counts.red}</span>` : ''}
+          ${r.severity_counts.yellow ? `<span class="sev sev-yellow">${r.severity_counts.yellow}</span>` : ''}
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-text btn-sm" data-del-report="${r.id}">Remove</button>
+        </div>
+      </div>`).join('');
+
+    qsa('[data-del-report]', regReports).forEach((btn) => btn.addEventListener('click', async () => {
+      const id = btn.dataset.delReport;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/dar/reports/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+        toast('Report removed.', 'success');
+        loadRegister();
+      } catch (err) {
+        toast(err.message, 'error');
+        btn.disabled = false;
+      }
+    }));
   }
 
   function buildEmail(v) {

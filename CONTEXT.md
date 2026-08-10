@@ -113,13 +113,31 @@ individual incidents behind it, and the whole table exports to CSV.
 the extractor reports `highlights_detected: false`, the UI says so plainly, and it falls back
 to extracting every row that describes a violation rather than silently returning nothing.
 
+**Incidents persist** (`dar_reports` and `dar_incidents` tables, via `aat_system/dar_repo.py`).
+This is what makes "first violation date" mean anything: within one upload it can only mean
+"earliest row in this report", but across stored reports it means the first time that unit was
+ever written up. It also makes the yellow-escalates-on-recurrence rule work across weeks rather
+than only within a single shift.
+
+The **Incident Log** tab is the standing register: one row per unit across every report ever
+uploaded, with first and latest violation dates, occurrence count, triage, and keywords. Rows
+expand to the individual incidents, each traceable back to the report file it came from. Below
+it sits the log of uploaded reports, with per-report severity counts and a Remove action for
+re-running a bad extraction. Filterable by property ID; exports to CSV.
+
+The per-upload table and the standing register share `aggregate_by_unit`, so both apply
+identical triage rules — there is no second implementation to drift.
+
 ### API surface
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | Serves the single-page UI |
 | `GET /analyze/workflows` | Rubrics per workflow, plus whether a credential is configured |
 | `POST /analyze` | Grades an uploaded document against a workflow rubric |
-| `POST /analyze/dar` | Extracts highlighted DAR incidents, grouped by unit |
+| `POST /analyze/dar` | Extracts highlighted DAR incidents, grouped by unit; stores them |
+| `GET /dar/register` | Standing per-unit register across all stored reports |
+| `GET /dar/reports` | Log of uploaded reports, newest first |
+| `DELETE /dar/reports/{id}` | Remove a report and its incidents |
 | `POST /token`, `POST /users`, `GET /users/me` | Auth and user management |
 | `POST /documents/upload` | Redact and ingest into the repository |
 | `GET /leases/expired` | Lease expiration scan |
@@ -140,8 +158,10 @@ See `.env.example`. Without a credential the UI warns up front and `POST /analyz
 503 with an actionable message rather than failing opaquely.
 
 ### Testing
-`python -m pytest tests/ -q` — 12 tests over DAR aggregation, triage, unit sorting, and
-keyword dedupe. No API key required; no model call involved.
+`python -m pytest tests/ -q` — 24 tests covering DAR aggregation, triage, unit sorting, and
+keyword dedupe, plus the persistence round-trip (cross-report first-violation dates,
+recurrence escalation across reports, property filtering, cascade delete). No API key
+required; no model call involved.
 
 Sample documents in `sample_docs/`:
 
@@ -167,9 +187,10 @@ Sample documents in `sample_docs/`:
   layering point, not a real redaction implementation.
 - Tests cover DAR aggregation only. The LLM-facing paths, the API endpoints, and the frontend
   have no automated coverage.
-- **DAR recurrence is per-upload, not historical.** "First violation date" is the earliest
-  date in the report just uploaded. Tracking a unit's violations across weeks of DARs needs
-  incidents persisted to the database and keyed by property + unit — the aggregation function
-  already accepts a flat incident list, so it would work unchanged once the rows are stored.
+- Units are matched by the exact string the model reads off the report, so `12A`, `12-A`, and
+  `Unit 12A` would become three separate rows. Normalization is needed before this handles
+  reports from multiple properties with inconsistent unit formats.
 - Extracted DAR incidents are not written to the repository or the breach log, so a red-flagged
   unit does not yet feed the Breach Notice workflow automatically.
+- Re-uploading the same report creates duplicate incidents; there is no dedupe on
+  (property, unit, date, snippet). Use Remove on the report log to undo.

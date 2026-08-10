@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .db import Base, engine, SessionLocal, get_db
 from .models import User, Folder, Document, Lease
@@ -15,7 +16,7 @@ from .document_repo import ingest_document, scan_expired_leases, get_or_create_f
 from .config import Division, Role, CORE_FOLDERS
 from .security import authenticate_user, create_access_token, get_current_active_user, get_password_hash
 from .utils import ensure_storage_directories
-from . import llm_analyzer, dar_analyzer
+from . import llm_analyzer, dar_analyzer, dar_repo
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -33,6 +34,9 @@ class DocumentUploadRequest(BaseModel):
     division: Division
 
 app = FastAPI(title="AAT System")
+
+# The UI identifies divisions by short key; the DB stores the full enum value.
+DIVISION_KEYS = {"mf": Division.MULTIFAMILY, "retail": Division.OFFICE}
 
 static_dir = Path(__file__).resolve().parent.parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -190,10 +194,29 @@ async def analyze_document_endpoint(
         "verdict": verdict.model_dump(),
     }
 
+@app.get("/dar/register")
+def dar_register(property_id: str = "", db: Session = Depends(get_db)):
+    """Standing per-unit register across every stored report."""
+    return dar_repo.unit_register(db, property_id=property_id or None)
+
+@app.get("/dar/reports")
+def dar_reports(db: Session = Depends(get_db)):
+    """Log of reports uploaded so far, newest first."""
+    return {"reports": dar_repo.list_reports(db)}
+
+@app.delete("/dar/reports/{report_id}")
+def dar_delete_report(report_id: int, db: Session = Depends(get_db)):
+    """Drop a report and its incidents, e.g. to re-run a bad extraction."""
+    if not dar_repo.delete_report(db, report_id):
+        raise HTTPException(status_code=404, detail="Report not found")
+    return {"deleted": report_id}
+
 @app.post("/analyze/dar")
 async def analyze_dar_endpoint(
     property_id: str = Form(""),
+    save: bool = Form(True),
     upload_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
 ):
     """Extract highlighted incidents from a Daily Activity Report, grouped by unit.
 
@@ -235,8 +258,120 @@ async def analyze_dar_endpoint(
     except anthropic.APIConnectionError:
         raise HTTPException(status_code=502, detail="Could not reach the Anthropic API.")
 
+    raw_incidents = result.pop("_incidents", [])
     result["filename"] = upload_file.filename
+    result["saved"] = False
+
+    if save:
+        try:
+            report = dar_repo.save_report(
+                db,
+                extraction=result["report"],
+                incidents=raw_incidents,
+                filename=upload_file.filename or "report",
+                property_id=property_id or None,
+            )
+            result["saved"] = True
+            result["report_id"] = report.id
+        except Exception as exc:  # analysis already succeeded — don't lose it
+            db.rollback()
+            result["save_error"] = f"Analysis succeeded but saving failed: {exc}"
+
     return result
+
+@app.get("/dashboard/summary")
+def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
+    """Every number the dashboard shows, read from the database.
+
+    Nothing here is seeded or estimated: folder counts come from the documents
+    table, lease counts from lease_end dates, and the review queue from DAR
+    incidents that triaged to escalate. An empty repository reports zeroes.
+
+    Unauthenticated for the same reason as /analyze — the preview UI holds no
+    token. Gate it with get_current_active_user before exposing beyond localhost.
+    """
+    div = DIVISION_KEYS.get(division, Division.MULTIFAMILY)
+
+    per_folder = dict(
+        db.query(Folder.name, func.count(Document.id))
+        .outerjoin(Document, Document.folder_id == Folder.id)
+        .filter(Folder.division == div)
+        .group_by(Folder.name)
+        .all()
+    )
+    folders = [{"name": name, "count": per_folder.get(name, 0)} for name in CORE_FOLDERS]
+
+    now = datetime.utcnow()
+    cutoff = now + timedelta(days=30)
+    leases_expiring = (
+        db.query(func.count(Lease.id))
+        .filter(Lease.lease_end >= now, Lease.lease_end <= cutoff)
+        .scalar()
+        or 0
+    )
+    leases_expired = db.query(func.count(Lease.id)).filter(Lease.lease_end < now).scalar() or 0
+
+    # Units whose incident history triaged to escalate are the real "needs a human"
+    # queue: red-highlighted, or yellow that recurred. See dar_analyzer triage rules.
+    register = dar_repo.unit_register(db)
+    escalations = []
+    for unit in register["units"]:
+        if unit["triage"] != "escalate":
+            continue
+        sources = unit.get("sources") or []
+        escalations.append(
+            {
+                "unit": unit["unit"],
+                "property_id": next((s.get("property_id") for s in sources if s.get("property_id")), ""),
+                "property_name": next((s.get("property_name") for s in sources if s.get("property_name")), ""),
+                "occurrences": unit["occurrences"],
+                "first_violation_date": unit["first_violation_date"],
+                "latest_violation_date": unit["latest_violation_date"],
+                "worst_highlight": unit["worst_highlight"],
+                "categories": unit["categories"],
+                "keywords": unit["keywords"],
+                "snippets": unit["snippets"],
+                "lease_relevant": any(inc.get("lease_relevant") for inc in unit.get("incidents", [])),
+                "reports": sorted({s.get("filename") for s in sources if s.get("filename")}),
+            }
+        )
+
+    return {
+        "division": div.value,
+        "folders": folders,
+        "documents_total": sum(f["count"] for f in folders),
+        "leases_expiring_soon": leases_expiring,
+        "leases_expired": leases_expired,
+        "leases_total": db.query(func.count(Lease.id)).scalar() or 0,
+        "dar": register["totals"],
+        "escalations": escalations,
+    }
+
+@app.get("/repository/documents")
+def repository_documents(division: str = "mf", folder: str = "", q: str = "", db: Session = Depends(get_db)):
+    """Documents actually stored in the repository, for the workflow doc search.
+
+    Unauthenticated preview endpoint — same caveat as /dashboard/summary.
+    """
+    div = DIVISION_KEYS.get(division, Division.MULTIFAMILY)
+    query = db.query(Document).join(Folder).filter(Folder.division == div)
+    if folder:
+        query = query.filter(Folder.name == folder)
+    if q:
+        query = query.filter(Document.filename.ilike(f"%{q}%"))
+    documents = query.order_by(Document.uploaded_at.desc()).limit(100).all()
+    return {
+        "documents": [
+            {
+                "id": d.id,
+                "filename": d.filename,
+                "folder": d.folder.name if d.folder else None,
+                "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
+                "redacted": d.redacted_at is not None,
+            }
+            for d in documents
+        ]
+    }
 
 @app.get("/phase2/email-ingestion")
 def email_ingestion_placeholder(current_user: User = Depends(get_current_active_user)):
