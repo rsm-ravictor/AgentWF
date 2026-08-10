@@ -4,65 +4,95 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AAT — Access Agent Toolkit</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233d6ff2'/%3E%3Cstop offset='.55' stop-color='%239b72cb'/%3E%3Cstop offset='1' stop-color='%23d96570'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='sans-serif' font-weight='700' font-size='17' fill='%23fff'%3EA%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
 
-    <!-- ============ SCREEN 1: LOGIN ============ -->
+    <!-- Inline SVG icon sprite -->
+    <svg xmlns="http://www.w3.org/2000/svg" class="hidden" aria-hidden="true">
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-umbrella" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 1 9 9H3a9 9 0 0 1 9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 12v6a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 4a3 3 0 0 1 6 0" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3l9-16z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.2" fill="currentColor"/></symbol>
+      <symbol id="i-flag" viewBox="0 0 24 24"><path d="M6 21V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6 5h12l-3 4 3 4H6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+      <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 7l9 6 9-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M14 3v5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5m0 0l-4 4m4-4l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4.2-4.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4 7 7 0 0 0 20 14.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-building" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 7h2m2 0h2M9 11h2m2 0h2M9 15h2m2 0h2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-store" viewBox="0 0 24 24"><path d="M4 9l1.4-4.5A1 1 0 0 1 6.4 4h11.2a1 1 0 0 1 1 .5L20 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M4 9h16v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 20v-6h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4 12h16m0 0l-6-6m6 6l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></symbol>
+    </svg>
+
+    <!-- ============ LOGIN ============ -->
     <section id="screen-login" class="screen login-screen">
       <div class="login-card">
         <div class="login-brand">
-          <div class="logo-mark">A</div>
+          <div class="logo-mark" aria-hidden="true">A</div>
           <h1>Access Agent Toolkit</h1>
-          <p>Sign in to continue</p>
+          <p>Asset &amp; lease workflows for AAT divisions</p>
         </div>
 
-        <div class="division-picker" id="division-picker">
-          <button type="button" class="division-option" data-division="retail">
-            <span class="d-icon">🏬</span>
-            <span class="d-title">Retail / Office</span>
-            <span class="d-sub">Executive &amp; Operations</span>
-          </button>
-          <button type="button" class="division-option" data-division="mf">
-            <span class="d-icon">🏢</span>
+        <div class="division-picker" id="division-picker" role="radiogroup" aria-label="Division">
+          <button type="button" class="division-option" role="radio" aria-checked="false" data-division="mf">
+            <svg class="icon d-icon"><use href="#i-building"/></svg>
             <span class="d-title">Multifamily</span>
-            <span class="d-sub">Property &amp; Community</span>
+            <span class="d-sub">Residential · Phase 1</span>
+          </button>
+          <button type="button" class="division-option" role="radio" aria-checked="false" data-division="retail">
+            <svg class="icon d-icon"><use href="#i-store"/></svg>
+            <span class="d-title">Office / Retail</span>
+            <span class="d-sub">Phase 2 preview</span>
           </button>
         </div>
 
-        <form id="login-form">
+        <form id="login-form" novalidate>
           <div class="field">
             <label for="login-user">Username</label>
-            <input id="login-user" type="text" autocomplete="username" placeholder="you@company.com" />
+            <input id="login-user" type="text" autocomplete="username" placeholder="you@aat.com" />
           </div>
           <div class="field">
             <label for="login-pass">Password</label>
             <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••" />
           </div>
-          <p class="login-error" id="login-error"></p>
+          <p class="login-error" id="login-error" role="alert"></p>
           <button type="submit" class="btn btn-primary btn-block" id="login-submit">Sign in</button>
+          <p class="login-hint">Prototype build — any credentials work.</p>
         </form>
       </div>
     </section>
 
-    <!-- ============ SCREEN 2: DASHBOARD ============ -->
-    <section id="screen-dashboard" class="screen hidden">
+    <!-- ============ APP SHELL ============ -->
+    <div id="app" class="hidden">
       <header class="app-nav">
         <div class="app-nav-left">
-          <div class="nav-brand"><div class="logo-mark small">A</div> AAT</div>
-          <nav class="nav-tabs">
+          <div class="nav-brand"><div class="logo-mark small" aria-hidden="true">A</div> AAT</div>
+          <nav class="nav-tabs" aria-label="Primary">
             <button class="nav-tab active" data-target="dashboard">Dashboard</button>
-            <button class="nav-tab" data-target="usecases">Use Cases</button>
+            <button class="nav-tab" data-target="workflows">Workflows</button>
           </nav>
         </div>
         <div class="app-nav-right">
           <span class="division-badge js-division-badge">—</span>
+          <button class="icon-btn" id="theme-toggle" aria-label="Toggle dark mode">
+            <svg class="icon theme-icon-moon"><use href="#i-moon"/></svg>
+            <svg class="icon theme-icon-sun"><use href="#i-sun"/></svg>
+          </button>
           <span class="user-chip js-user-name">—</span>
-          <button class="btn btn-text signout-btn">Sign out</button>
+          <button class="btn btn-text" id="signout-btn">Sign out</button>
         </div>
       </header>
 
-      <main class="app-main">
+      <!-- ============ DASHBOARD ============ -->
+      <main class="app-main view" id="view-dashboard">
         <div class="dash-greeting">
           <h1 id="dashboard-greeting">Welcome</h1>
           <p id="dashboard-subtitle">Here's what's happening across your repository today.</p>
@@ -70,66 +100,76 @@
 
         <div class="stat-grid">
           <div class="stat-tile">
-            <div class="stat-value" id="stat-usecases">0</div>
-            <div class="stat-label">Use cases available</div>
+            <div class="stat-label">Active workflows</div>
+            <div class="stat-value" id="stat-workflows">0</div>
+            <div class="stat-note">Phase 1 · Multifamily</div>
           </div>
           <div class="stat-tile">
-            <div class="stat-value" id="stat-documents">0</div>
             <div class="stat-label">Documents in repository</div>
+            <div class="stat-value" id="stat-documents">0</div>
+            <div class="stat-note"><span class="delta delta-up">+12</span> this week</div>
           </div>
           <div class="stat-tile">
-            <div class="stat-value" id="stat-leases">0</div>
             <div class="stat-label">Leases expiring soon</div>
+            <div class="stat-value" id="stat-leases">0</div>
+            <div class="stat-note">next 30 days</div>
           </div>
           <div class="stat-tile">
-            <div class="stat-value" id="stat-pending">0</div>
             <div class="stat-label">Pending human review</div>
+            <div class="stat-value" id="stat-pending">0</div>
+            <div class="stat-note">awaiting sign-off</div>
           </div>
         </div>
 
         <div class="section-heading">
-          <h2>Use cases to review</h2>
+          <h2>Workflows</h2>
           <p>Pick one to fetch documents and run the process</p>
         </div>
         <div class="review-grid" id="review-grid"></div>
+
+        <div class="section-heading">
+          <h2>Repository folders</h2>
+          <p>Core document categories tracked by the redaction pipeline</p>
+        </div>
+        <div class="folder-strip" id="folder-strip"></div>
+
+        <div class="dash-lower">
+          <section class="panel activity-panel">
+            <h2>Recent activity</h2>
+            <ul class="activity-list" id="activity-list"></ul>
+          </section>
+
+          <section class="panel phase2-card">
+            <div class="phase2-head">
+              <svg class="icon"><use href="#i-mail"/></svg>
+              <span class="pill pill-soon">Phase 2</span>
+            </div>
+            <h2>Email ingestion</h2>
+            <p>Inbox scanning will automatically classify incoming documents into repository folders and trigger the matching workflow — no manual upload needed.</p>
+            <button class="btn btn-secondary btn-sm" id="phase2-notify">Notify me when live</button>
+          </section>
+        </div>
       </main>
-    </section>
 
-    <!-- ============ SCREEN 3: USE CASES ============ -->
-    <section id="screen-usecases" class="screen hidden">
-      <header class="app-nav">
-        <div class="app-nav-left">
-          <div class="nav-brand"><div class="logo-mark small">A</div> AAT</div>
-          <nav class="nav-tabs">
-            <button class="nav-tab" data-target="dashboard">Dashboard</button>
-            <button class="nav-tab active" data-target="usecases">Use Cases</button>
-          </nav>
-        </div>
-        <div class="app-nav-right">
-          <span class="division-badge js-division-badge">—</span>
-          <span class="user-chip js-user-name">—</span>
-          <button class="btn btn-text signout-btn">Sign out</button>
-        </div>
-      </header>
-
-      <main class="app-main">
-        <nav class="uc-bar" id="usecase-bar">
-          <button class="uc-chip" data-id="lease-compare">Lease Compare</button>
-          <button class="uc-chip" data-id="renewal-prep">Renewal Prep</button>
-          <button class="uc-chip" data-id="insurance-check">Insurance Check</button>
-          <button class="uc-chip" data-id="tenant-verify">Tenant Verify</button>
-          <button class="uc-chip" data-id="doc-validate">Document Validate</button>
-        </nav>
+      <!-- ============ WORKFLOWS ============ -->
+      <main class="app-main view hidden" id="view-workflows">
+        <nav class="uc-bar" id="workflow-bar" aria-label="Workflows"></nav>
 
         <div class="uc-layout">
           <aside class="uc-panel">
-            <h2 id="uc-title">Select a use case</h2>
-            <p class="uc-desc" id="uc-desc">Choose a use case above to see required documents and actions.</p>
+            <div class="uc-panel-head">
+              <div class="uc-panel-icon" id="uc-icon-wrap"><svg class="icon" id="uc-icon"><use href="#i-file"/></svg></div>
+              <div>
+                <h2 id="uc-title">Select a workflow</h2>
+                <span class="uc-folder" id="uc-folder"></span>
+              </div>
+            </div>
+            <p class="uc-desc" id="uc-desc">Choose a workflow above to see required documents and actions.</p>
 
             <h4>Required documents</h4>
-            <ul class="uc-doclist" id="uc-docs"></ul>
+            <ul class="uc-doclist" id="uc-docs"><li class="muted">—</li></ul>
 
-            <h4>Search</h4>
+            <h4>Search repository</h4>
             <div class="field">
               <label for="prop-id">Property ID</label>
               <input id="prop-id" placeholder="e.g. RES-001" />
@@ -140,50 +180,61 @@
             </div>
 
             <div class="uc-actions">
-              <button id="fetch-docs" class="btn btn-secondary">Fetch Needed Docs</button>
-              <button id="manual-upload" class="btn btn-secondary">Manual Upload</button>
+              <button id="fetch-docs" class="btn btn-secondary">
+                <svg class="icon"><use href="#i-search"/></svg> Fetch needed docs
+              </button>
+              <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload a document">
+                <svg class="icon"><use href="#i-upload"/></svg>
+                <span>Drop a file or <u>browse</u></span>
+              </div>
               <input id="manual-upload-input" type="file" class="hidden" />
-              <button id="start-process" class="btn btn-primary" disabled>Start Process</button>
+              <ul class="upload-list" id="upload-list"></ul>
+              <button id="start-process" class="btn btn-primary" disabled>
+                Start process <svg class="icon"><use href="#i-arrow-right"/></svg>
+              </button>
             </div>
           </aside>
 
           <section class="workspace">
-            <div class="process-track" id="uc-status-steps">
-              <div class="p-step">1</div><div class="p-connector"></div>
-              <div class="p-step">2</div><div class="p-connector"></div>
-              <div class="p-step">3</div><div class="p-connector"></div>
-              <div class="p-step">4</div><div class="p-connector"></div>
-              <div class="p-step">5</div>
-            </div>
-            <div class="status-line">
-              <div class="status-text" id="uc-status-desc">Idle</div>
+            <div class="workspace-empty" id="workspace-empty">
+              <svg class="icon big"><use href="#i-clipboard"/></svg>
+              <h3>No workflow selected</h3>
+              <p>Pick a workflow to see its steps, fetch the documents it needs, and run the agent process.</p>
             </div>
 
-            <div class="results-block" id="uc-results">
-              <h3>Results</h3>
-              <div class="match-summary" id="match-summary">No run yet</div>
-              <div class="match-columns" id="match-list"></div>
+            <div class="workspace-body hidden" id="workspace-body">
+              <div class="process-track" id="uc-status-steps"></div>
+              <div class="status-line">
+                <div class="status-text" id="uc-status-desc" aria-live="polite">Idle</div>
+                <span class="pill pill-idle" id="run-pill">Idle</span>
+              </div>
 
-              <div class="human-actions hidden" id="human-actions">
-                <h4>Human in the loop</h4>
-                <textarea id="pre-email" rows="4">Hello,
+              <div class="log-block">
+                <h4>Activity log</h4>
+                <div class="run-log" id="run-log" aria-live="polite"><div class="log-line muted">Waiting for a run…</div></div>
+              </div>
 
-We attempted to fetch the required documents. Missing: [MISSING]. Please advise or provide them.
+              <div class="results-block" id="uc-results">
+                <h3>Results</h3>
+                <div class="match-summary" id="match-summary">No run yet</div>
+                <div class="match-columns" id="match-list"></div>
 
-Thanks,
-AAT Agent</textarea>
-                <div class="human-buttons">
-                  <button id="send-email" class="btn btn-secondary">Send Email</button>
-                  <button id="sign-off" class="btn btn-primary">Sign Off &amp; Store</button>
+                <div class="human-actions hidden" id="human-actions">
+                  <h4><svg class="icon"><use href="#i-mail"/></svg> Human in the loop</h4>
+                  <textarea id="pre-email" rows="5" aria-label="Draft email"></textarea>
+                  <div class="human-buttons">
+                    <button id="send-email" class="btn btn-secondary">Send email</button>
+                    <button id="sign-off" class="btn btn-primary">Sign off &amp; store</button>
+                  </div>
                 </div>
               </div>
             </div>
           </section>
         </div>
       </main>
-    </section>
+    </div>
 
-    <div class="toast-wrap" id="toast-wrap"></div>
+    <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
     <script src="/static/app.js"></script>
   </body>
