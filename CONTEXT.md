@@ -84,12 +84,42 @@ ambiguous; judgment calls and near-threshold values route to `needs_human_review
 keeps the human-in-the-loop requirement intact — the model does the reading and makes the
 call auditable, it does not clear things through.
 
+### Daily Activity Report extraction — real, working
+`aat_system/dar_analyzer.py` handles DARs, which are a different problem from the rubric
+workflows: extraction and triage rather than pass/fail grading.
+
+**Highlight colour is the signal.** Whoever writes the report has already triaged it by
+highlighting rows. Text extraction discards colour entirely, so PDFs and images are sent to
+the model natively (never through `pypdf`), which lets it read the fills visually. Semantics:
+
+| Highlight | Meaning | Triage |
+| --- | --- | --- |
+| Red | Severe | Escalate to management; may warrant a breach notice |
+| Yellow | Worth watching | Log it; escalates automatically on recurrence |
+| None | Routine patrol activity | Skipped, unless the text plainly describes a violation |
+
+This mirrors the Security Report rules above: minor nonrecurring issues get notes only,
+severe issues go to management.
+
+**Model vs code split.** The model extracts incidents and reads highlight colours — judgment
+and vision. Code groups by unit, finds the first-violation date, and counts occurrences —
+arithmetic, which is deterministic and wrong to delegate to a model.
+
+**Output** is one row per unit: unit number, first violation date, latest date, occurrence
+count, worst highlight, triage, categories, keywords, and snippets. Each row expands to the
+individual incidents behind it, and the whole table exports to CSV.
+
+**When highlighting is absent** — a plain-text export, or a scan where fills were flattened —
+the extractor reports `highlights_detected: false`, the UI says so plainly, and it falls back
+to extracting every row that describes a violation rather than silently returning nothing.
+
 ### API surface
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | Serves the single-page UI |
 | `GET /analyze/workflows` | Rubrics per workflow, plus whether a credential is configured |
 | `POST /analyze` | Grades an uploaded document against a workflow rubric |
+| `POST /analyze/dar` | Extracts highlighted DAR incidents, grouped by unit |
 | `POST /token`, `POST /users`, `GET /users/me` | Auth and user management |
 | `POST /documents/upload` | Redact and ingest into the repository |
 | `GET /leases/expired` | Lease expiration scan |
@@ -110,10 +140,17 @@ See `.env.example`. Without a credential the UI warns up front and `POST /analyz
 503 with an actionable message rather than failing opaquely.
 
 ### Testing
-`sample_docs/vendor_coi_brightline.txt` is a certificate of insurance whose general
-liability limit is $1M against the rubric's $2M requirement, and which names AAT as
-certificate holder rather than additional insured. Both should come back short, so the
-rejection path is exercisable without supplying a real document.
+`python -m pytest tests/ -q` — 12 tests over DAR aggregation, triage, unit sorting, and
+keyword dedupe. No API key required; no model call involved.
+
+Sample documents in `sample_docs/`:
+
+- `vendor_coi_brightline.txt` — a certificate of insurance whose general liability limit is
+  $1M against the rubric's $2M requirement, and which names AAT as certificate holder rather
+  than additional insured. Both come back short, so the rejection path is exercisable.
+- `sample_dar_highlighted.pdf` — a Daily Activity Report with real yellow and red fills,
+  including a unit that appears twice (escalating from yellow to red) so recurrence is
+  visible. Regenerate with `python sample_docs/make_sample_dar.py`.
 
 ## Known Gaps
 - `POST /analyze` is unauthenticated so the preview UI can reach it. Gate it behind
@@ -128,4 +165,11 @@ rejection path is exercisable without supplying a real document.
   analysis should sit behind redaction before handling live tenant data.
 - `redact_pdf` adds a text annotation rather than removing the underlying content; it is a
   layering point, not a real redaction implementation.
-- No automated test suite.
+- Tests cover DAR aggregation only. The LLM-facing paths, the API endpoints, and the frontend
+  have no automated coverage.
+- **DAR recurrence is per-upload, not historical.** "First violation date" is the earliest
+  date in the report just uploaded. Tracking a unit's violations across weeks of DARs needs
+  incidents persisted to the database and keyed by property + unit — the aggregation function
+  already accepts a flat incident list, so it would work unchanged once the rows are stored.
+- Extracted DAR incidents are not written to the repository or the breach log, so a red-flagged
+  unit does not yet feed the Breach Notice workflow automatically.

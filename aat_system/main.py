@@ -15,7 +15,7 @@ from .document_repo import ingest_document, scan_expired_leases, get_or_create_f
 from .config import Division, Role, CORE_FOLDERS
 from .security import authenticate_user, create_access_token, get_current_active_user, get_password_hash
 from .utils import ensure_storage_directories
-from . import llm_analyzer
+from . import llm_analyzer, dar_analyzer
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -189,6 +189,54 @@ async def analyze_document_endpoint(
         "filename": upload_file.filename,
         "verdict": verdict.model_dump(),
     }
+
+@app.post("/analyze/dar")
+async def analyze_dar_endpoint(
+    property_id: str = Form(""),
+    upload_file: UploadFile = File(...),
+):
+    """Extract highlighted incidents from a Daily Activity Report, grouped by unit.
+
+    Prototype endpoint: unauthenticated so the preview UI can exercise it. Put it
+    behind get_current_active_user before this is exposed beyond localhost.
+    """
+    if not llm_analyzer.has_api_key():
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not set. Add it to .env and restart the server.",
+        )
+
+    contents = await upload_file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(contents) > MAX_ANALYZE_BYTES:
+        raise HTTPException(status_code=413, detail="File is larger than the 20 MB limit.")
+
+    try:
+        result = dar_analyzer.analyze_dar(
+            file_bytes=contents,
+            filename=upload_file.filename or "report",
+            media_type=upload_file.content_type or "application/octet-stream",
+            property_id=property_id,
+        )
+    except TypeError as exc:
+        if "authentication" in str(exc).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="No Anthropic credential resolved. Set ANTHROPIC_API_KEY in .env and restart.",
+            )
+        raise
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=502, detail="Anthropic rejected the API key.")
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Rate limited by Anthropic. Try again shortly.")
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Anthropic API error: {exc.message}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(status_code=502, detail="Could not reach the Anthropic API.")
+
+    result["filename"] = upload_file.filename
+    return result
 
 @app.get("/phase2/email-ingestion")
 def email_ingestion_placeholder(current_user: User = Depends(get_current_active_user)):

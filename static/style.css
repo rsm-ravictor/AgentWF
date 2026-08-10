@@ -460,6 +460,95 @@ button { color: inherit; }
 .ai-hint { font-size: 0.76rem; color: var(--text-muted); margin: -4px 0 0; line-height: 1.45; }
 .ai-hint-warn { color: var(--warn); }
 
+/* ---------- DAR: per-unit incident table ---------- */
+.dar-warn {
+  display: flex; gap: 9px; align-items: flex-start;
+  background: var(--warn-bg); color: var(--warn);
+  padding: 11px 13px; border-radius: 10px;
+  font-size: 0.82rem; line-height: 1.5; margin: 10px 0 4px;
+}
+.dar-warn .icon { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
+
+.dar-totals { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 4px; }
+.dar-totals > div {
+  flex: 1 1 78px; min-width: 78px;
+  background: var(--surface-2); border-radius: 10px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 1px;
+}
+.dt-num { font-size: 1.2rem; font-weight: 700; line-height: 1.1; }
+.dt-lbl { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+.dt-esc .dt-num { color: var(--danger); }
+.dt-watch .dt-num { color: var(--warn); }
+
+.dar-actions { display: flex; gap: 8px; margin: 16px 0 10px; }
+
+/* Table scrolls inside its own container — the page never scrolls sideways. */
+.dar-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+.dar-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; min-width: 720px; }
+.dar-table thead th {
+  text-align: left; padding: 9px 12px;
+  background: var(--surface-2); color: var(--text-secondary);
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+  position: sticky; top: 0; z-index: 1;
+}
+.dar-table td { padding: 10px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+
+/* Highlight colour carried through as a left edge — the report's own signal. */
+.dar-row.hl-red td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+.dar-row.hl-yellow td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+
+.unit-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; text-align: left;
+}
+.ut-chev { width: 14px; height: 14px; color: var(--text-secondary); transition: transform 160ms ease; }
+.unit-toggle.open .ut-chev { transform: rotate(180deg); }
+
+.c-date { white-space: nowrap; color: var(--text-secondary); }
+.c-count { white-space: nowrap; font-weight: 600; }
+.repeat-flag {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  background: var(--danger-bg); color: var(--danger);
+  font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.c-snip { color: var(--text-secondary); max-width: 320px; line-height: 1.45; }
+.snip-more { color: var(--text-muted); font-style: italic; }
+
+.tri { padding: 3px 9px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+.tri-escalate { background: var(--danger-bg); color: var(--danger); }
+.tri-watch { background: var(--warn-bg); color: var(--warn); }
+.tri-note { background: var(--surface-2); color: var(--text-secondary); }
+
+.kw {
+  display: inline-block; margin: 0 4px 4px 0; padding: 2px 8px;
+  border-radius: 999px; background: var(--blue-tint); color: var(--blue-dark);
+  font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+}
+
+.dar-detail td { background: var(--surface-2); padding: 12px; }
+.inc { border-left: 3px solid var(--border); padding: 8px 12px; margin-bottom: 8px; background: var(--surface); border-radius: 0 8px 8px 0; }
+.inc:last-child { margin-bottom: 0; }
+.inc.hl-red { border-left-color: var(--danger); }
+.inc.hl-yellow { border-left-color: var(--warn); }
+.inc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.82rem; margin-bottom: 5px; }
+.inc-when { color: var(--text-secondary); font-size: 0.76rem; }
+.inc-lease {
+  padding: 1px 7px; border-radius: 999px; background: var(--danger-bg); color: var(--danger);
+  font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.inc-snip { font-size: 0.82rem; line-height: 1.5; margin-bottom: 6px; }
+.inc-kw { line-height: 1; }
+
+.dar-legend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.74rem; color: var(--text-secondary); margin: 12px 0 0; }
+.dar-legend .lg { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.dar-legend .lg.hl-red { background: var(--danger); }
+.dar-legend .lg.hl-yellow { background: var(--warn); margin-left: 10px; }
+
+@media (max-width: 720px) {
+  .dar-totals > div { flex-basis: calc(50% - 5px); }
+}
+
 @media (max-width: 720px) {
   .ap-docs { grid-template-columns: 1fr; }
   .ap-flag { display: none; }

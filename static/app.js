@@ -37,12 +37,13 @@
       steps: ['Retrieve lease', 'Draft notice', 'Check history', 'Mgmt review', 'Log breach'],
     },
     'security-report': {
-      title: 'Security Report',
-      desc: 'Review flagged items from daily activity reports, classify severity, and escalate or log incidents.',
+      title: 'Daily Activity Report',
+      desc: 'Read a DAR, pull out every row highlighted yellow or red, and group the incidents by unit.',
       icon: 'i-flag',
       folder: 'Daily Activity Reports',
-      docs: ['Daily activity report', 'Incident log'],
-      steps: ['Ingest report', 'Review flags', 'Classify severity', 'Escalate / note', 'Log'],
+      docs: ['Daily activity report (PDF or image, with highlighting intact)'],
+      steps: ['Read report', 'Find highlights', 'Extract incidents', 'Group by unit', 'Triage'],
+      dar: true, // uses the DAR extractor, not the rubric grader
     },
   };
 
@@ -111,6 +112,7 @@
     missingDocs: [],
     uploads: [],
     lastFile: null,
+    lastDar: null,
     running: false,
     approvals: pendingApprovals.slice(),
     expandedApproval: null,
@@ -673,22 +675,38 @@
     aiDecision.textContent = 'Working';
     aiBody.innerHTML = '<div class="ai-loading">Reading the document and grading it against every requirement…</div>';
 
+    const isDar = !!wf.dar;
     const form = new FormData();
-    form.append('workflow', state.selectedWorkflow);
     form.append('property_id', propId.value.trim());
-    form.append('unit_id', unitId.value.trim());
     form.append('upload_file', state.lastFile);
+    if (!isDar) {
+      form.append('workflow', state.selectedWorkflow);
+      form.append('unit_id', unitId.value.trim());
+    }
 
     try {
-      const res = await fetch('/analyze', { method: 'POST', body: form });
+      const res = await fetch(isDar ? '/analyze/dar' : '/analyze', { method: 'POST', body: form });
       const payload = await res.json();
       if (!res.ok) throw new Error(payload.detail || `Request failed (${res.status})`);
-      renderVerdict(payload.verdict);
-      setRunPill('done', 'Analyzed');
-      statusDesc.textContent = 'Analysis complete — review the findings.';
-      logLine(`Verdict: ${payload.verdict.decision} (${payload.verdict.confidence} confidence).`, true);
-      humanActions.classList.remove('hidden');
-      preEmail.value = buildEmail(payload.verdict);
+
+      if (isDar) {
+        state.lastDar = payload;
+        renderDar(payload);
+        setRunPill('done', 'Extracted');
+        const t = payload.totals;
+        statusDesc.textContent = `${t.incidents} incident(s) across ${t.units_affected} unit(s).`;
+        logLine(`Extracted ${t.incidents} incidents across ${t.units_affected} units; ${t.escalate} to escalate.`, true);
+        if (!payload.report.highlights_detected) {
+          logLine('No colour highlighting was visible — extracted all violation rows instead.');
+        }
+      } else {
+        renderVerdict(payload.verdict);
+        setRunPill('done', 'Analyzed');
+        statusDesc.textContent = 'Analysis complete — review the findings.';
+        logLine(`Verdict: ${payload.verdict.decision} (${payload.verdict.confidence} confidence).`, true);
+        humanActions.classList.remove('hidden');
+        preEmail.value = buildEmail(payload.verdict);
+      }
     } catch (err) {
       aiDecision.className = 'pill pill-error';
       aiDecision.textContent = 'Error';
@@ -707,9 +725,6 @@
     const meta = DECISION_META[v.decision] || { label: v.decision, cls: 'pill-idle' };
     aiDecision.className = `pill ${meta.cls}`;
     aiDecision.textContent = meta.label;
-
-    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
     const findings = (v.findings || []).map((f) => {
       const s = STATUS_META[f.status] || STATUS_META.unclear;
@@ -741,6 +756,153 @@
       ${fields ? `<h4>Extracted</h4><table class="ai-fields"><tbody>${fields}</tbody></table>` : ''}
       ${missing ? `<h4>Missing information</h4><ul class="ai-missing">${missing}</ul>` : ''}
     `;
+  }
+
+  // ---------------- DAR: per-unit incident table ----------------
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const TRIAGE_META = {
+    escalate: { label: 'Escalate', cls: 'tri-escalate' },
+    watch: { label: 'Watch', cls: 'tri-watch' },
+    note_only: { label: 'Note only', cls: 'tri-note' },
+  };
+
+  function renderDar(payload) {
+    const { report, units, totals } = payload;
+    aiDecision.className = `pill ${totals.escalate ? 'pill-error' : totals.watch ? 'pill-review' : 'pill-done'}`;
+    aiDecision.textContent = totals.escalate
+      ? `${totals.escalate} to escalate`
+      : totals.watch ? `${totals.watch} to watch` : 'Nothing flagged';
+
+    const header = `
+      <div class="ai-meta">
+        ${report.property_name ? `<span><strong>Property:</strong> ${esc(report.property_name)}</span>` : ''}
+        ${report.report_date ? `<span><strong>Date:</strong> ${esc(report.report_date)}</span>` : ''}
+        ${report.shift_or_range ? `<span><strong>Shift:</strong> ${esc(report.shift_or_range)}</span>` : ''}
+        ${report.reporting_officer ? `<span><strong>Officer:</strong> ${esc(report.reporting_officer)}</span>` : ''}
+      </div>
+      ${report.highlights_detected
+        ? ''
+        : `<div class="dar-warn">${iconSvg('i-info')}<span>No colour highlighting was visible in this document, so every row describing a violation was extracted instead. Upload the original PDF (not a re-print or plain-text export) to triage by highlight colour.</span></div>`}
+      <div class="dar-totals">
+        <div><span class="dt-num">${totals.units_affected}</span><span class="dt-lbl">units</span></div>
+        <div><span class="dt-num">${totals.incidents}</span><span class="dt-lbl">incidents</span></div>
+        <div class="dt-esc"><span class="dt-num">${totals.escalate}</span><span class="dt-lbl">escalate</span></div>
+        <div class="dt-watch"><span class="dt-num">${totals.watch}</span><span class="dt-lbl">watch</span></div>
+        <div><span class="dt-num">${totals.repeat_units}</span><span class="dt-lbl">repeat</span></div>
+      </div>`;
+
+    if (!units.length) {
+      aiBody.innerHTML = header + '<p class="ai-summary muted">No highlighted incidents found in this report.</p>'
+        + (report.notes ? `<h4>Notes</h4><p class="ai-reasoning">${esc(report.notes)}</p>` : '');
+      return;
+    }
+
+    const rows = units.map((u, i) => {
+      const tri = TRIAGE_META[u.triage] || TRIAGE_META.note_only;
+      const kw = u.keywords.map((k) => `<span class="kw">${esc(k)}</span>`).join('');
+      const snippet = u.snippets[0] || '';
+      const extra = u.snippets.length > 1 ? ` +${u.snippets.length - 1} more` : '';
+      return `
+        <tr class="dar-row hl-${esc(u.worst_highlight)}" data-unit-row="${i}">
+          <td class="c-unit">
+            <button class="unit-toggle" data-toggle="${i}" aria-expanded="false">
+              ${iconSvg('i-chevron', 'ut-chev')}<strong>${esc(u.unit)}</strong>
+            </button>
+          </td>
+          <td class="c-date">${esc(u.first_violation_date) || '—'}</td>
+          <td class="c-count">${u.occurrences}${u.occurrences > 1 ? '<span class="repeat-flag">repeat</span>' : ''}</td>
+          <td class="c-triage"><span class="tri ${tri.cls}">${tri.label}</span></td>
+          <td class="c-kw">${kw}</td>
+          <td class="c-snip">${esc(snippet)}<span class="snip-more">${extra}</span></td>
+        </tr>
+        <tr class="dar-detail hidden" data-detail="${i}">
+          <td colspan="6">
+            ${u.incidents.map((inc) => `
+              <div class="inc hl-${esc(inc.highlight)}">
+                <div class="inc-head">
+                  <span class="inc-dot"></span>
+                  <strong>${esc(inc.category)}</strong>
+                  <span class="inc-when">${esc(inc.date)}${inc.time ? ' · ' + esc(inc.time) : ''}</span>
+                  ${inc.lease_relevant ? '<span class="inc-lease">lease-relevant</span>' : ''}
+                </div>
+                <div class="inc-snip">${esc(inc.snippet)}</div>
+                <div class="inc-kw">${inc.keywords.map((k) => `<span class="kw">${esc(k)}</span>`).join('')}</div>
+              </div>`).join('')}
+          </td>
+        </tr>`;
+    }).join('');
+
+    aiBody.innerHTML = `
+      ${header}
+      <div class="dar-actions">
+        <button class="btn btn-secondary btn-sm" id="dar-csv">Export CSV</button>
+        <button class="btn btn-secondary btn-sm" id="dar-expand">Expand all</button>
+      </div>
+      <div class="dar-scroll">
+        <table class="dar-table">
+          <thead>
+            <tr>
+              <th>Unit</th><th>1st violation</th><th>#</th><th>Triage</th><th>Keywords</th><th>Snippet</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${report.notes ? `<h4>Notes</h4><p class="ai-reasoning">${esc(report.notes)}</p>` : ''}
+      <p class="dar-legend">
+        <span class="lg hl-red"></span> red highlight — escalate
+        <span class="lg hl-yellow"></span> yellow — watch, escalates on recurrence
+      </p>`;
+
+    // Row expansion
+    qsa('[data-toggle]', aiBody).forEach((btn) => btn.addEventListener('click', () => {
+      const i = btn.dataset.toggle;
+      const detail = qs(`[data-detail="${i}"]`, aiBody);
+      const open = !detail.classList.contains('hidden');
+      detail.classList.toggle('hidden', open);
+      btn.setAttribute('aria-expanded', String(!open));
+      btn.classList.toggle('open', !open);
+    }));
+
+    qs('#dar-expand', aiBody)?.addEventListener('click', (e) => {
+      const details = qsa('.dar-detail', aiBody);
+      const anyClosed = details.some((d) => d.classList.contains('hidden'));
+      details.forEach((d) => d.classList.toggle('hidden', !anyClosed));
+      qsa('[data-toggle]', aiBody).forEach((b) => {
+        b.classList.toggle('open', anyClosed);
+        b.setAttribute('aria-expanded', String(anyClosed));
+      });
+      e.currentTarget.textContent = anyClosed ? 'Collapse all' : 'Expand all';
+    });
+
+    qs('#dar-csv', aiBody)?.addEventListener('click', () => exportDarCsv(payload));
+  }
+
+  function exportDarCsv(payload) {
+    const cell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const lines = [
+      ['Unit', 'First violation', 'Latest violation', 'Occurrences', 'Triage', 'Highlight', 'Categories', 'Keywords', 'Snippets']
+        .map(cell).join(','),
+    ];
+    payload.units.forEach((u) => {
+      lines.push([
+        u.unit, u.first_violation_date, u.latest_violation_date, u.occurrences,
+        u.triage, u.worst_highlight, u.categories.join('; '),
+        u.keywords.join('; '), u.snippets.join(' | '),
+      ].map(cell).join(','));
+    });
+    // Prefix with BOM so Excel reads UTF-8 correctly.
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = (payload.report.report_date || 'report').replace(/[^0-9A-Za-z-]/g, '');
+    a.href = url;
+    a.download = `dar-incidents-${stamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('CSV downloaded.', 'success');
   }
 
   function buildEmail(v) {
