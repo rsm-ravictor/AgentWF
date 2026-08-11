@@ -719,7 +719,19 @@ button { color: inherit; }
 .uc-chip:hover { border-color: var(--blue); }
 .uc-chip.selected { border-color: var(--blue); background: var(--blue-tint); color: var(--blue-dark); }
 
-.uc-layout { display: grid; grid-template-columns: 310px minmax(0, 1fr); gap: 20px; align-items: start; }
+/* Left panel takes a third, the workspace the remaining two. */
+.uc-layout { display: grid; grid-template-columns: minmax(290px, 1fr) minmax(0, 2fr); gap: 20px; align-items: start; }
+
+.uc-back { margin-bottom: 14px; padding-left: 0; }
+.uc-back .icon { width: 15px; height: 15px; }
+
+/* Panel actions, grouped by what they do rather than one undifferentiated stack. */
+.uc-block { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.uc-block h4 { margin-top: 0; }
+.uc-block-hint { font-size: 0.76rem; color: var(--text-muted); margin: -2px 0 10px; line-height: 1.45; }
+.uc-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.btn-block { width: 100%; justify-content: center; margin-top: 10px; }
+.uc-block .dropzone + .upload-list:not(:empty) { margin-top: 10px; }
 
 .uc-panel, .workspace {
   background: var(--surface);
@@ -779,20 +791,28 @@ button { color: inherit; }
 }
 .upload-list .icon { width: 14px; height: 14px; color: var(--text-secondary); }
 
-/* ---------- Workspace ---------- */
-.workspace-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 10px;
-  padding: 64px 24px;
+/* ---------- Workspace blocks (approvals, record keeping, record files) ---------- */
+.ws-block { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.ws-block-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.ws-block-head h4 {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-secondary);
+  margin: 0;
 }
-.workspace-empty .icon.big { color: var(--text-muted); }
-.workspace-empty h3 { margin: 0; color: var(--text); }
-.workspace-empty p { margin: 0; font-size: 0.88rem; max-width: 380px; line-height: 1.55; }
+.ws-count { font-size: 0.72rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+.ws-count.count-warn { background: var(--warn-bg); color: var(--warn); }
+.ws-count.count-ok { background: var(--success-bg); color: var(--success); }
 
+/* Record keeping and record files read side by side — both are the archive. */
+.ws-records { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.ws-records .ws-block { margin-top: 0; }
+
+.rec-tally { display: flex; align-items: baseline; gap: 7px; margin-top: 10px; font-size: 0.78rem; color: var(--text-secondary); }
+.rec-rows { font-size: 1.3rem; font-weight: 600; color: var(--text); line-height: 1; }
+
+/* ---------- Workspace ---------- */
 .process-track { display: flex; align-items: flex-start; margin-bottom: 4px; }
 .p-node { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 56px; }
 .p-step {
@@ -1057,9 +1077,11 @@ button { color: inherit; }
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 18px;
+  cursor: pointer;
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
-.uc-card:hover { border-color: var(--blue); box-shadow: var(--shadow-sm); }
+.uc-card:hover, .uc-card:focus-visible { border-color: var(--blue); box-shadow: var(--shadow-sm); }
+.uc-card:hover .uc-open { border-color: var(--blue); color: var(--blue-dark); background: var(--blue-tint); }
 .uc-card.selected { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(61, 111, 242, 0.16); }
 
 .uc-card-head { display: flex; align-items: flex-start; gap: 11px; }
@@ -1095,41 +1117,12 @@ button { color: inherit; }
 .ucs-ok .ucs-num { color: var(--success); }
 .ucs-warn .ucs-num { color: var(--danger); }
 
-.uc-card-section h4 {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-secondary);
-  margin: 0 0 7px;
-}
 .uc-card-note { margin: 0; font-size: 0.79rem; color: var(--text-secondary); line-height: 1.5; }
 
-.wfm-list, .wfm-files, .wfm-outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.wfm-list li, .wfm-files li { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }
+.wfm-files, .wfm-outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wfm-files li { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }
 
-.wfm-link {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-}
-.wfm-link:hover .wfm-subject { color: var(--blue); text-decoration: underline; }
-.wfm-ref { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 0.7rem; color: var(--text-muted); flex-shrink: 0; }
-.wfm-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.wfm-tag { flex-shrink: 0; padding: 2px 8px; border-radius: 999px; font-size: 0.66rem; font-weight: 700; }
-.wfm-tag.tag-warn { background: var(--warn-bg); color: var(--warn); }
-.wfm-tag.tag-ok { background: var(--success-bg); color: var(--success); }
-
-.wfm-empty, .wfm-more { color: var(--text-muted); font-size: 0.78rem; }
+.wfm-empty { color: var(--text-muted); font-size: 0.78rem; }
 .wfm-error { color: var(--danger); font-size: 0.78rem; }
 
 .wfm-file { display: flex; align-items: center; gap: 7px; color: var(--blue); text-decoration: none; min-width: 0; }
@@ -1150,20 +1143,6 @@ button { color: inherit; }
   color: var(--text-secondary);
 }
 .wfo-count { font-weight: 700; color: var(--text); }
-
-.uc-card-missing, .uc-card-ready {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin: 0;
-  font-size: 0.76rem;
-  line-height: 1.45;
-  padding: 9px 11px;
-  border-radius: 9px;
-}
-.uc-card-missing { background: var(--danger-bg); color: var(--danger); }
-.uc-card-ready { background: var(--success-bg); color: var(--success); }
-.uc-card-missing .icon, .uc-card-ready .icon { width: 14px; height: 14px; margin-top: 1px; flex-shrink: 0; }
 
 /* ---------- Required documents checklist ---------- */
 .uc-doc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -1430,6 +1409,7 @@ button { color: inherit; }
 @media (max-width: 900px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .uc-layout { grid-template-columns: 1fr; }
+  .ws-records { grid-template-columns: 1fr; }
   .match-columns { grid-template-columns: 1fr; }
   .dash-lower { grid-template-columns: 1fr; }
   .app-nav { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }

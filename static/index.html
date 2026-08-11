@@ -29,6 +29,7 @@
       <symbol id="i-building" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 7h2m2 0h2M9 11h2m2 0h2M9 15h2m2 0h2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
       <symbol id="i-store" viewBox="0 0 24 24"><path d="M4 9l1.4-4.5A1 1 0 0 1 6.4 4h11.2a1 1 0 0 1 1 .5L20 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M4 9h16v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 20v-6h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
       <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4 12h16m0 0l-6-6m6 6l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M20 12H4m0 0l6-6m-6 6l6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8L18 16z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></symbol>
@@ -201,10 +202,13 @@
       </main>
 
       <!-- ============ WORKFLOWS ============ -->
+      <!-- Sub-landing: status at a glance only. Detail lives one click in. -->
       <main class="app-main view hidden" id="view-workflows">
-        <nav class="uc-bar" id="workflow-bar" aria-label="Workflows"></nav>
+        <div class="dash-greeting">
+          <h1>Workflows</h1>
+          <p>Every Phase 1 use case and where it stands. Open one for its pipeline, approvals and records.</p>
+        </div>
 
-        <!-- One mini-dashboard per use case -->
         <div class="section-heading">
           <h2>Use case overview</h2>
           <div class="sh-actions">
@@ -213,6 +217,16 @@
           </div>
         </div>
         <section class="wf-usecases" id="wf-usecases" aria-label="Use case summaries"></section>
+      </main>
+
+      <!-- ============ USE CASE DETAIL — one workflow, everything about it ============ -->
+      <main class="app-main view hidden" id="view-usecase">
+        <button class="btn btn-text btn-sm uc-back" id="uc-back">
+          <svg class="icon"><use href="#i-arrow-left"/></svg> All use cases
+        </button>
+
+        <!-- Switch use case without a round trip through the overview. -->
+        <nav class="uc-bar" id="workflow-bar" aria-label="Workflows"></nav>
 
         <div class="uc-layout">
           <aside class="uc-panel">
@@ -232,48 +246,68 @@
             <ul class="uc-doclist" id="uc-docs"><li class="muted">—</li></ul>
             <p class="doc-hint" id="uc-doc-hint"></p>
 
-            <h4>Search repository</h4>
-            <div class="field">
-              <label for="prop-id">Property ID</label>
-              <input id="prop-id" placeholder="e.g. RES-001" />
-            </div>
-            <div class="field">
-              <label for="unit-id">Unit #</label>
-              <input id="unit-id" placeholder="e.g. 12A" />
+            <!-- Find a client -->
+            <div class="uc-block">
+              <h4>Find a client</h4>
+              <div class="field">
+                <label for="client-name">Client / tenant name</label>
+                <input id="client-name" placeholder="e.g. Brightline Services" />
+              </div>
+              <div class="uc-field-row">
+                <div class="field">
+                  <label for="prop-id">Property ID</label>
+                  <input id="prop-id" placeholder="RES-001" />
+                </div>
+                <div class="field">
+                  <label for="unit-id">Unit #</label>
+                  <input id="unit-id" placeholder="12A" />
+                </div>
+              </div>
+              <button id="fetch-docs" class="btn btn-secondary btn-block">
+                <svg class="icon"><use href="#i-search"/></svg> Search repository
+              </button>
             </div>
 
-            <div class="uc-actions">
-              <button id="fetch-docs" class="btn btn-secondary">
-                <svg class="icon"><use href="#i-search"/></svg> Fetch needed docs
-              </button>
+            <!-- Upload documents -->
+            <div class="uc-block">
+              <h4>Upload documents</h4>
               <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload a document">
                 <svg class="icon"><use href="#i-upload"/></svg>
                 <span>Drop a file or <u>browse</u></span>
               </div>
               <input id="manual-upload-input" type="file" class="hidden" />
               <ul class="upload-list" id="upload-list"></ul>
-              <button id="analyze-doc" class="btn btn-primary" disabled>
+              <button id="analyze-doc" class="btn btn-primary btn-block" disabled>
                 <svg class="icon"><use href="#i-sparkle"/></svg> Analyze with Claude
               </button>
               <p class="ai-hint" id="ai-hint">Attach a real PDF, image, or text file to grade it against this workflow's rubric.</p>
-              <button id="start-process" class="btn btn-secondary" disabled>
-                Simulate run <svg class="icon"><use href="#i-arrow-right"/></svg>
+            </div>
+
+            <!-- Run it manually -->
+            <div class="uc-block">
+              <h4>Run this use case</h4>
+              <p class="uc-block-hint">Walks the pipeline end to end and queues the outcome for a human.</p>
+              <button id="start-process" class="btn btn-secondary btn-block" disabled>
+                Run now <svg class="icon"><use href="#i-arrow-right"/></svg>
               </button>
             </div>
           </aside>
 
           <section class="workspace">
-            <div class="workspace-empty" id="workspace-empty">
-              <svg class="icon big"><use href="#i-clipboard"/></svg>
-              <h3>No workflow selected</h3>
-              <p>Pick a workflow to see its steps, fetch the documents it needs, and run the agent process.</p>
-            </div>
-
-            <div class="workspace-body hidden" id="workspace-body">
+            <div class="workspace-body" id="workspace-body">
               <div class="process-track" id="uc-status-steps"></div>
               <div class="status-line">
                 <div class="status-text" id="uc-status-desc" aria-live="polite">Idle</div>
                 <span class="pill pill-idle" id="run-pill">Idle</span>
+              </div>
+
+              <!-- Outstanding approvals for this use case only -->
+              <div class="ws-block">
+                <div class="ws-block-head">
+                  <h4>Outstanding approvals</h4>
+                  <span class="ws-count" id="uc-ap-count"></span>
+                </div>
+                <div id="uc-approvals"><div class="ai-loading">Loading approvals…</div></div>
               </div>
 
               <div class="log-block">
@@ -302,6 +336,18 @@
                     <button id="send-email" class="btn btn-secondary">Send email</button>
                     <button id="sign-off" class="btn btn-primary">Sign off &amp; store</button>
                   </div>
+                </div>
+              </div>
+
+              <!-- The archive: what has been signed off, and the files holding it -->
+              <div class="ws-records">
+                <div class="ws-block">
+                  <div class="ws-block-head"><h4>Record keeping</h4></div>
+                  <div id="uc-records"></div>
+                </div>
+                <div class="ws-block">
+                  <div class="ws-block-head"><h4>Record files</h4></div>
+                  <ul class="wfm-files" id="uc-record-files"></ul>
                 </div>
               </div>
             </div>

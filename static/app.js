@@ -84,7 +84,8 @@
     expandedGroup: null,    // which use-case group is open on the dashboard
     expandedApproval: null,
     reviewingApproval: null,
-    overviews: [],          // one mini-dashboard payload per use case
+    overviews: [],          // one summary payload per use case, for the grid
+    detail: null,           // the open use case's own overview payload
     sop: null,
     sopEditing: false,
     repo: { folders: [], folder: '', documents: [], total: 0 },
@@ -275,16 +276,19 @@
     tab.addEventListener('click', () => switchView(tab.dataset.target));
   });
 
-  const VIEWS = ['dashboard', 'workflows', 'repository', 'register', 'profile', 'admin'];
+  const VIEWS = ['dashboard', 'workflows', 'usecase', 'repository', 'register', 'profile', 'admin'];
 
   function switchView(name) {
     VIEWS.forEach((v) => qs(`#view-${v}`).classList.toggle('hidden', v !== name));
-    qsa('.nav-tab').forEach((t) => t.classList.toggle('active', t.dataset.target === name));
+    // The use case detail page is a child of Workflows, so that tab stays lit.
+    const tab = name === 'usecase' ? 'workflows' : name;
+    qsa('.nav-tab').forEach((t) => t.classList.toggle('active', t.dataset.target === tab));
     if (name === 'register') loadRegister();
     if (name === 'workflows') loadUseCaseOverviews();
     if (name === 'repository') loadRepository();
     if (name === 'profile') renderProfile();
     if (name === 'admin') loadAdmin();
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
   // ---------------- Data loading ----------------
@@ -351,10 +355,7 @@
       grid.appendChild(card);
     });
     qsa('[data-review]', grid).forEach((btn) => {
-      btn.addEventListener('click', () => {
-        switchView('workflows');
-        selectWorkflow(btn.dataset.review);
-      });
+      btn.addEventListener('click', () => selectWorkflow(btn.dataset.review));
     });
 
     // Chips open the Repository Folder page filtered to that folder.
@@ -464,7 +465,11 @@
     qsa('[data-ap-return]', wrap).forEach((btn) => btn.addEventListener('click', () => resolveApproval(Number(btn.dataset.apReturn), 'returned')));
   }
 
-  function buildApprovalItem(ap, wf) {
+  // Rendered in two places — the dashboard queue and the use case detail page.
+  // Both are in the DOM at once, so ids are scoped, and each re-renders itself
+  // on expand rather than the other one.
+  function buildApprovalItem(ap, wf, opts) {
+    const { scope = 'dash', rerender = renderApprovals } = opts || {};
     const expanded = state.expandedApproval === ap.id;
     const li = document.createElement('li');
     li.className = `approval-item${expanded ? ' expanded' : ''}`;
@@ -472,7 +477,7 @@
     const head = document.createElement('button');
     head.className = 'approval-head';
     head.setAttribute('aria-expanded', String(expanded));
-    head.setAttribute('aria-controls', `ap-body-${ap.id}`);
+    head.setAttribute('aria-controls', `ap-body-${scope}-${ap.id}`);
     head.innerHTML = `
       <span class="ap-ref"></span>
       <span class="ap-main">
@@ -490,12 +495,12 @@
     head.querySelector('.ap-flag').classList.add(ap.missing.length ? 'flag-warn' : 'flag-ok');
     head.addEventListener('click', () => {
       state.expandedApproval = expanded ? null : ap.id;
-      renderApprovals();
+      rerender();
     });
 
     const body = document.createElement('div');
     body.className = 'approval-body';
-    body.id = `ap-body-${ap.id}`;
+    body.id = `ap-body-${scope}-${ap.id}`;
     if (!expanded) body.classList.add('hidden');
 
     const docItem = (text, icon) => `<li>${iconSvg(icon)}<span>${esc(text)}</span></li>`;
@@ -533,7 +538,6 @@
     if (!ap) return;
     if (state.running) return toast('Wait for the current run to finish.', 'error');
 
-    switchView('workflows');
     selectWorkflow(ap.workflow);
 
     propId.value = ap.property;
@@ -556,7 +560,6 @@
     humanActions.classList.remove('hidden');
     preEmail.value = EMAIL_TEMPLATE.replace('[MISSING]', ap.missing.length ? ap.missing.join(', ') : 'None');
 
-    qs('#view-workflows').scrollIntoView({ behavior: 'smooth', block: 'start' });
     toast(`Loaded ${ap.reference} for review.`, 'info');
   }
 
@@ -642,6 +645,7 @@
   const preEmail = qs('#pre-email');
   const propId = qs('#prop-id');
   const unitId = qs('#unit-id');
+  const clientName = qs('#client-name');
 
   function renderWorkflowBar() {
     const bar = qs('#workflow-bar');
@@ -695,11 +699,16 @@
     // refresh — selecting a workflow should not blank the panel while it loads.
     const known = (state.overviews || []).find((o) => o.workflow === id);
     renderDocChecklist(known ? known.required_documents : null, wf);
-    if (state.overviews.length) renderUseCases();
-    loadUseCaseOverviews();
+    state.detail = known || null;
+    if (known) renderUseCaseDetail();
+    else qs('#uc-approvals').innerHTML = '<div class="ai-loading">Loading approvals…</div>';
+    loadUseCaseDetail(id);
     loadSop(id);
 
     uploadList.innerHTML = '';
+    clientName.value = '';
+    propId.value = '';
+    unitId.value = '';
     state.lastFile = null;
     if (analyzeBtn) analyzeBtn.disabled = true;
     if (aiBlock) aiBlock.classList.add('hidden');
@@ -709,13 +718,18 @@
     humanActions.classList.add('hidden');
     preEmail.value = EMAIL_TEMPLATE;
 
-    qs('#workspace-empty').classList.add('hidden');
-    qs('#workspace-body').classList.remove('hidden');
     renderSteps(wf.steps);
     statusDesc.textContent = 'Idle — fetch the required documents to begin.';
     setRunPill('idle', 'Idle');
     runLog.innerHTML = '<div class="log-line muted">Waiting for a run…</div>';
+
+    switchView('usecase');
   }
+
+  qs('#uc-back').addEventListener('click', () => {
+    if (state.running) return toast('Wait for the current run to finish.', 'error');
+    switchView('workflows');
+  });
 
   // ---------------- Per-use-case mini-dashboards ----------------
   // Every workflow gets its own card, whether or not it is the one selected, so
@@ -741,9 +755,11 @@
     }
   }
 
-  // Kept for callers that refresh after a single workflow changes.
-  function loadWorkflowOverview() {
-    return loadUseCaseOverviews();
+  // Callers that change one workflow's data need both the grid snapshot and the
+  // open detail page to catch up, since the two read different endpoints.
+  function loadWorkflowOverview(workflowId) {
+    const id = workflowId || state.selectedWorkflow;
+    return Promise.all([loadUseCaseOverviews(), id ? loadUseCaseDetail(id) : null]);
   }
 
   function renderUseCases() {
@@ -753,25 +769,25 @@
     qs('#wf-mini-summary').textContent =
       `${totalOpen} approval${totalOpen === 1 ? '' : 's'} outstanding · ${totalRows} record row${totalRows === 1 ? '' : 's'} logged`;
 
+    // Snapshot only — name, folder, three numbers. Approvals, record keeping and
+    // record files live on the detail page, where there is room to act on them.
     useCaseGrid.innerHTML = overviews
       .map((o) => {
         const wf = workflows[o.workflow] || { icon: 'i-file', title: o.title };
         const docs = o.required_documents;
-        const rec = o.records;
         const selected = state.selectedWorkflow === o.workflow;
         const complete = docs.present === docs.total;
 
         return `
-        <article class="uc-card${selected ? ' selected' : ''}" data-uc="${o.workflow}">
+        <article class="uc-card${selected ? ' selected' : ''}" data-uc-open="${o.workflow}"
+                 tabindex="0" role="button" aria-label="Open ${esc(o.title)}">
           <header class="uc-card-head">
             <span class="uc-card-icon">${iconSvg(wf.icon)}</span>
             <div class="uc-card-title">
               <h3>${esc(o.title)}</h3>
               <span>${esc(o.folder)}</span>
             </div>
-            <button class="btn btn-secondary btn-sm uc-open" data-uc-open="${o.workflow}">
-              ${selected ? 'Selected' : 'Open'}
-            </button>
+            <span class="btn btn-secondary btn-sm uc-open">${selected ? 'Selected' : 'Open'}</span>
           </header>
 
           <div class="uc-card-stats">
@@ -780,7 +796,7 @@
               <span class="ucs-lbl">outstanding approvals</span>
             </div>
             <div class="ucs">
-              <span class="ucs-num">${rec.rows_logged || 0}</span>
+              <span class="ucs-num">${o.records.rows_logged || 0}</span>
               <span class="ucs-lbl">rows logged</span>
             </div>
             <div class="ucs ${complete ? 'ucs-ok' : 'ucs-warn'}">
@@ -788,68 +804,89 @@
               <span class="ucs-lbl">required docs</span>
             </div>
           </div>
-
-          <div class="uc-card-section">
-            <h4>Outstanding approvals</h4>
-            <ul class="wfm-list">
-              ${o.approvals.length
-                ? o.approvals.slice(0, 3).map((ap) => `<li>
-                    <button class="wfm-link" data-mini-ap="${ap.id}">
-                      <span class="wfm-ref">${esc(ap.reference)}</span>
-                      <span class="wfm-subject">${esc(ap.subject)}</span>
-                    </button>
-                    <span class="wfm-tag ${ap.missing.length ? 'tag-warn' : 'tag-ok'}">${
-                      ap.missing.length ? `${ap.missing.length} missing` : 'ready'
-                    }</span>
-                  </li>`).join('') +
-                  (o.approvals.length > 3
-                    ? `<li class="wfm-more">+${o.approvals.length - 3} more</li>`
-                    : '')
-                : '<li class="wfm-empty">Nothing waiting on a human.</li>'}
-            </ul>
-          </div>
-
-          <div class="uc-card-section">
-            <h4>Record keeping</h4>
-            <p class="uc-card-note">${
-              rec.last_updated
-                ? `Last updated ${esc(formatWhen(rec.last_updated))}${rec.last_updated_by ? ` by ${esc(rec.last_updated_by)}` : ''}.`
-                : 'No rows recorded yet — sign-offs and send-backs land here.'
-            }</p>
-            ${Object.keys(rec.by_outcome || {}).length
-              ? `<ul class="wfm-outcomes">${Object.entries(rec.by_outcome)
-                  .map(([k, v]) => `<li><span class="wfo-count">${v}</span><span>${esc(k.replace(/_/g, ' '))}</span></li>`)
-                  .join('')}</ul>`
-              : ''}
-          </div>
-
-          <div class="uc-card-section">
-            <h4>Record files</h4>
-            <ul class="wfm-files">
-              ${(o.record_files || []).map((f) => `<li>
-                  <a class="wfm-file" href="${esc(f.url)}" target="_blank" rel="noopener">
-                    ${iconSvg('i-download')}<span class="wff-name">${esc(f.name)}</span>
-                  </a>
-                  <span class="wff-meta">${esc(f.label)}${
-                    f.rows != null ? ` · ${f.rows} row${f.rows === 1 ? '' : 's'}` : ''
-                  }</span>
-                </li>`).join('') || '<li class="wfm-empty">No record files yet.</li>'}
-            </ul>
-          </div>
-
-          ${docs.missing.length
-            ? `<p class="uc-card-missing">${iconSvg('i-x')} Missing: ${esc(docs.missing.join(', '))}</p>`
-            : `<p class="uc-card-ready">${iconSvg('i-check')} Every required document is on file.</p>`}
         </article>`;
       })
       .join('');
 
-    qsa('[data-uc-open]', useCaseGrid).forEach((btn) =>
-      btn.addEventListener('click', (e) => { e.stopPropagation(); selectWorkflow(btn.dataset.ucOpen); })
-    );
-    qsa('[data-mini-ap]', useCaseGrid).forEach((btn) =>
-      btn.addEventListener('click', (e) => { e.stopPropagation(); openApprovalInWorkflow(Number(btn.dataset.miniAp)); })
-    );
+    qsa('[data-uc-open]', useCaseGrid).forEach((card) => {
+      card.addEventListener('click', () => selectWorkflow(card.dataset.ucOpen));
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectWorkflow(card.dataset.ucOpen); }
+      });
+    });
+  }
+
+  // ---------------- Use case detail ----------------
+  // Everything the overview card no longer carries: this workflow's approvals,
+  // what has been signed off, and the files holding the record.
+  async function loadUseCaseDetail(workflowId) {
+    try {
+      const detail = await api(`/workflows/${workflowId}/overview?division=${state.division}`);
+      if (state.selectedWorkflow !== workflowId) return; // user moved on while it loaded
+      state.detail = detail;
+      renderDocChecklist(detail.required_documents, workflows[workflowId]);
+      renderUseCaseDetail();
+    } catch (err) {
+      qs('#uc-approvals').innerHTML = '<div class="ai-error"></div>';
+      qs('#uc-approvals').firstElementChild.textContent = err.message;
+    }
+  }
+
+  function renderUseCaseDetail() {
+    const detail = state.detail;
+    if (!detail) return;
+    const wf = workflows[detail.workflow];
+    const wrap = qs('#uc-approvals');
+    const rec = detail.records;
+
+    // --- Outstanding approvals, reusing the dashboard's expandable rows ---
+    qs('#uc-ap-count').textContent = detail.approvals.length
+      ? `${detail.approvals.length} waiting`
+      : 'all clear';
+    qs('#uc-ap-count').className = `ws-count ${detail.approvals.length ? 'count-warn' : 'count-ok'}`;
+
+    wrap.innerHTML = '';
+    if (!detail.approvals.length) {
+      wrap.innerHTML = `<div class="approval-empty">${iconSvg('i-check')}<span>Nothing waiting on a human for this use case.</span></div>`;
+    } else {
+      const list = document.createElement('ul');
+      list.className = 'approval-list';
+      detail.approvals.forEach((ap) =>
+        list.appendChild(buildApprovalItem(ap, wf, { scope: 'uc', rerender: renderUseCaseDetail }))
+      );
+      wrap.appendChild(list);
+      qsa('[data-ap-open]', wrap).forEach((b) => b.addEventListener('click', () => openApprovalInWorkflow(Number(b.dataset.apOpen))));
+      qsa('[data-ap-approve]', wrap).forEach((b) => b.addEventListener('click', () => resolveApproval(Number(b.dataset.apApprove), 'approved')));
+      qsa('[data-ap-return]', wrap).forEach((b) => b.addEventListener('click', () => resolveApproval(Number(b.dataset.apReturn), 'returned')));
+    }
+
+    // --- Record keeping ---
+    qs('#uc-records').innerHTML = `
+      <p class="uc-card-note">${
+        rec.last_updated
+          ? `Last updated ${esc(formatWhen(rec.last_updated))}${rec.last_updated_by ? ` by ${esc(rec.last_updated_by)}` : ''}.`
+          : 'No rows recorded yet — sign-offs and send-backs land here.'
+      }</p>
+      <div class="rec-tally">
+        <span class="rec-rows">${rec.rows_logged || 0}</span>
+        <span>row${rec.rows_logged === 1 ? '' : 's'} logged</span>
+      </div>
+      ${Object.keys(rec.by_outcome || {}).length
+        ? `<ul class="wfm-outcomes">${Object.entries(rec.by_outcome)
+            .map(([k, v]) => `<li><span class="wfo-count">${v}</span><span>${esc(k.replace(/_/g, ' '))}</span></li>`)
+            .join('')}</ul>`
+        : ''}`;
+
+    // --- Record files ---
+    qs('#uc-record-files').innerHTML =
+      (detail.record_files || []).map((f) => `<li>
+          <a class="wfm-file" href="${esc(f.url)}" target="_blank" rel="noopener">
+            ${iconSvg('i-download')}<span class="wff-name">${esc(f.name)}</span>
+          </a>
+          <span class="wff-meta">${esc(f.label)}${
+            f.rows != null ? ` · ${f.rows} row${f.rows === 1 ? '' : 's'}` : ''
+          }</span>
+        </li>`).join('') || '<li class="wfm-empty">No record files yet.</li>';
   }
 
   function formatWhen(iso) {
@@ -1030,9 +1067,11 @@
     const wf = workflows[state.selectedWorkflow];
     const pid = propId.value.trim() || 'RES-001';
     const uid = unitId.value.trim() || '01A';
-    statusDesc.textContent = `Searching repository for ${pid} / ${uid}…`;
+    const client = clientName.value.trim();
+    const who = client ? `${client} · ${pid} / ${uid}` : `${pid} / ${uid}`;
+    statusDesc.textContent = `Searching repository for ${who}…`;
     setRunPill('running', 'Searching');
-    logLine(`Query: ${wf.folder} · property ${pid} · unit ${uid}`);
+    logLine(`Query: ${wf.folder} · ${client ? `client ${client} · ` : ''}property ${pid} · unit ${uid}`);
 
     setTimeout(() => {
       const uploadedNames = state.uploads.map((u) => u.doc);
@@ -1438,10 +1477,7 @@
           across reports rather than only within one upload.</p>
           <button class="btn btn-primary btn-sm" id="reg-goto-dar">Go to Daily Activity Report</button>
         </div>`;
-      qs('#reg-goto-dar', regBody)?.addEventListener('click', () => {
-        switchView('workflows');
-        selectWorkflow('security-report');
-      });
+      qs('#reg-goto-dar', regBody)?.addEventListener('click', () => selectWorkflow('security-report'));
       return;
     }
 
