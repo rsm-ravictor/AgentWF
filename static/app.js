@@ -712,7 +712,9 @@
     state.lastFile = null;
     if (analyzeBtn) analyzeBtn.disabled = true;
     if (aiBlock) aiBlock.classList.add('hidden');
-    startBtn.disabled = true;
+    // Running by hand is always available — a search narrows what it runs
+    // against, it is not a precondition.
+    startBtn.disabled = false;
     matchSummary.textContent = 'No run yet';
     matchList.innerHTML = '';
     humanActions.classList.add('hidden');
@@ -1612,6 +1614,9 @@
     runLog.innerHTML = '';
     setRunPill('running', 'Running');
     logLine(`Run started — ${wf.title}`);
+    if (!state.foundDocs.length && !state.missingDocs.length) {
+      logLine('No search run — using whatever is already on file for this workflow.');
+    }
 
     const nodes = qsa('.p-node', stepsTrack);
     const connectors = qsa('.p-connector', stepsTrack);
@@ -1640,6 +1645,7 @@
   function finishRun(wf) {
     state.running = false;
     fetchBtn.disabled = false;
+    startBtn.disabled = false; // so it can be run again without reselecting
     statusDesc.textContent = 'Complete — awaiting human review.';
     setRunPill('done', 'Complete');
     logLine('Run complete. Queued for human review.', true);
