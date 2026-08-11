@@ -92,7 +92,20 @@ def read_root():
     html_path = static_dir / "index.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="UI preview not available")
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+    html = html_path.read_text(encoding="utf-8")
+    # Stamp each asset URL with that file's modification time. Nothing sets
+    # cache headers on /static, so a browser is free to pair a freshly served
+    # index.html with an app.js it cached before the last edit -- markup and
+    # script from different versions, which presents as a dead UI rather than
+    # as a stale file. A changing query string makes that pairing impossible.
+    for asset in ("app.js", "style.css"):
+        asset_path = static_dir / asset
+        if asset_path.exists():
+            stamp = int(asset_path.stat().st_mtime)
+            html = html.replace(f"/static/{asset}", f"/static/{asset}?v={stamp}")
+
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 @app.on_event("startup")
 def startup_event():
