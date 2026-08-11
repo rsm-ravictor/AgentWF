@@ -10,10 +10,133 @@ class Division(str, Enum):
     OFFICE = "Office/Retail"
 
 class Role(str, Enum):
+    SUPER_USER = "super_user"
+    ADMIN = "admin"
     DIVISION_HEAD = "division_head"
     SUBGROUP_OWNER = "subgroup_owner"
-    AGENT = "agent"
     REVIEWER = "reviewer"
+    AGENT = "agent"
+
+
+class Permission(str, Enum):
+    """Individual capabilities a role grants.
+
+    Kept separate from Role so the Admin page can show *what* a role actually
+    lets someone do, rather than an opaque label.
+    """
+
+    VIEW_DASHBOARD = "view_dashboard"
+    VIEW_REPOSITORY = "view_repository"
+    UPLOAD_DOCUMENTS = "upload_documents"
+    RUN_WORKFLOW = "run_workflow"
+    APPROVE_WORKFLOW = "approve_workflow"
+    EDIT_SOP = "edit_sop"
+    DELETE_RECORDS = "delete_records"
+    MANAGE_USERS = "manage_users"
+    MANAGE_ROLES = "manage_roles"
+    VIEW_ALL_DIVISIONS = "view_all_divisions"
+
+
+PERMISSION_LABELS = {
+    Permission.VIEW_DASHBOARD: "View dashboard",
+    Permission.VIEW_REPOSITORY: "Browse the repository",
+    Permission.UPLOAD_DOCUMENTS: "Upload documents",
+    Permission.RUN_WORKFLOW: "Run workflows",
+    Permission.APPROVE_WORKFLOW: "Approve and sign off",
+    Permission.EDIT_SOP: "Edit standing instructions",
+    Permission.DELETE_RECORDS: "Delete records and reports",
+    Permission.MANAGE_USERS: "Manage users",
+    Permission.MANAGE_ROLES: "Assign roles",
+    Permission.VIEW_ALL_DIVISIONS: "See every division",
+}
+
+# Display order, least to most privileged overall. Note this is NOT a strict
+# superset ladder: Agent, Reviewer and Subgroup Owner are peers with different
+# duties — a Reviewer signs off but does not upload; an Agent uploads and runs
+# work but never signs off. Only the senior tier (Division Head → Admin → Super
+# User) genuinely accumulates. The Profile page therefore reports permissions
+# granted rather than implying each step strictly contains the one below it.
+ROLE_ORDER = [
+    Role.AGENT,
+    Role.REVIEWER,
+    Role.SUBGROUP_OWNER,
+    Role.DIVISION_HEAD,
+    Role.ADMIN,
+    Role.SUPER_USER,
+]
+
+ROLE_LABELS = {
+    Role.SUPER_USER: "Super user",
+    Role.ADMIN: "Administrator",
+    Role.DIVISION_HEAD: "Division head",
+    Role.SUBGROUP_OWNER: "Subgroup owner",
+    Role.REVIEWER: "Reviewer",
+    Role.AGENT: "Agent",
+}
+
+ROLE_DESCRIPTIONS = {
+    Role.SUPER_USER: "Unrestricted. Manages roles and permissions across every division.",
+    Role.ADMIN: "Manages users and roles within their division, and can edit standing instructions.",
+    Role.DIVISION_HEAD: "Full access to every workflow and folder in their division, including sign-off.",
+    Role.SUBGROUP_OWNER: "Access limited to assigned folders; can run workflows and upload, but not sign off.",
+    Role.REVIEWER: "Reads and approves what the agent queues; cannot upload or change instructions.",
+    Role.AGENT: "Runs workflows and uploads documents. Every outcome goes to a human for sign-off.",
+}
+
+_ALL_PERMISSIONS = list(Permission)
+
+# The senior tier does accumulate — each of these contains everything below it.
+SENIOR_TIER = [Role.DIVISION_HEAD, Role.ADMIN, Role.SUPER_USER]
+
+ROLE_PERMISSIONS = {
+    Role.SUPER_USER: _ALL_PERMISSIONS,
+    Role.ADMIN: [
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_REPOSITORY,
+        Permission.UPLOAD_DOCUMENTS,
+        Permission.RUN_WORKFLOW,
+        Permission.APPROVE_WORKFLOW,
+        Permission.EDIT_SOP,
+        Permission.DELETE_RECORDS,
+        Permission.MANAGE_USERS,
+        Permission.MANAGE_ROLES,
+    ],
+    Role.DIVISION_HEAD: [
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_REPOSITORY,
+        Permission.UPLOAD_DOCUMENTS,
+        Permission.RUN_WORKFLOW,
+        Permission.APPROVE_WORKFLOW,
+        Permission.EDIT_SOP,
+        Permission.DELETE_RECORDS,
+    ],
+    Role.SUBGROUP_OWNER: [
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_REPOSITORY,
+        Permission.UPLOAD_DOCUMENTS,
+        Permission.RUN_WORKFLOW,
+    ],
+    Role.REVIEWER: [
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_REPOSITORY,
+        Permission.APPROVE_WORKFLOW,
+    ],
+    Role.AGENT: [
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_REPOSITORY,
+        Permission.UPLOAD_DOCUMENTS,
+        Permission.RUN_WORKFLOW,
+    ],
+}
+
+
+def permissions_for(role: Role) -> list:
+    """Permissions a role carries, as plain strings."""
+    return [p.value for p in ROLE_PERMISSIONS.get(role, [])]
+
+
+def has_permission(role: Role, permission: Permission) -> bool:
+    return permission in ROLE_PERMISSIONS.get(role, [])
 
 CORE_FOLDERS = [
     "Vendor Insurances",

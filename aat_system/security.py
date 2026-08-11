@@ -10,7 +10,11 @@ from .db import get_db
 from .models import User
 
 ALGORITHM = "HS256"
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# pbkdf2_sha256 ships inside passlib, so there is no native backend to go out of
+# step with it. passlib 1.7.4 cannot drive bcrypt >= 4.1 — its backend probe hashes
+# a 73-byte password, which those releases reject instead of truncating, so every
+# call raised ValueError. This avoids that class of breakage entirely.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
 

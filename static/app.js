@@ -57,43 +57,6 @@
     { name: 'AAT Company Requirements', count: 6 },
   ];
 
-  // Cases the agent has run that are queued for a human decision.
-  const pendingApprovals = [
-    {
-      id: 'AP-2041',
-      workflow: 'vendor-insurance',
-      property: 'RES-014',
-      unit: 'Common area',
-      subject: 'Brightline Landscaping — COI renewal',
-      raised: '12 min ago',
-      reason: 'General liability limit is $1M; AAT requirements specify $2M minimum.',
-      found: ['Vendor insurance certificate'],
-      missing: ['AAT requirements document'],
-    },
-    {
-      id: 'AP-2038',
-      workflow: 'renters-insurance',
-      property: 'RES-006',
-      unit: '3B',
-      subject: 'Tenant policy missing additional insured',
-      raised: '1 hr ago',
-      reason: 'Submitted policy does not list AAT as additional insured, as the lease requires.',
-      found: ['Lease agreement', 'Submitted insurance policy'],
-      missing: ['Tenant checklist'],
-    },
-    {
-      id: 'AP-2035',
-      workflow: 'breach-notice',
-      property: 'RES-009',
-      unit: '8C',
-      subject: 'Draft breach notice — noise violations',
-      raised: '3 hr ago',
-      reason: 'Third documented violation; drafted notice cites lease §12.4 and needs management sign-off before sending.',
-      found: ['Tenant lease', 'Violation report', 'Prior breach history'],
-      missing: [],
-    },
-  ];
-
   const recentActivity = [
     { icon: 'i-shield', text: 'Vendor Insurance verdict stored for RES-014 — compliant', time: '12 min ago' },
     { icon: 'i-alert', text: 'Breach notice for unit 8C queued for management review', time: '1 hr ago' },
@@ -107,6 +70,7 @@
   const state = {
     division: null,
     userName: null,
+    profile: null,          // role, permissions and folder scope, resolved server-side
     selectedWorkflow: null,
     foundDocs: [],
     missingDocs: [],
@@ -115,10 +79,33 @@
     lastDar: null,
     register: null,
     running: false,
-    approvals: pendingApprovals.slice(),
+    approvals: [],          // pending cases, read from /approvals
+    approvalCounts: {},
+    expandedGroup: null,    // which use-case group is open on the dashboard
     expandedApproval: null,
     reviewingApproval: null,
+    overviews: [],          // one mini-dashboard payload per use case
+    sop: null,
+    sopEditing: false,
+    repo: { folders: [], folder: '', documents: [], total: 0 },
   };
+
+  // ---------------- API ----------------
+  async function api(path, options) {
+    const res = await fetch(path, options);
+    let payload = null;
+    try {
+      payload = await res.json();
+    } catch {
+      payload = null;
+    }
+    if (!res.ok) {
+      throw new Error((payload && payload.detail) || `Request failed (${res.status})`);
+    }
+    return payload;
+  }
+
+  const can = (permission) => !!(state.profile && state.profile.permissions.includes(permission));
 
   const EMAIL_TEMPLATE = 'Hello,\n\nWe attempted to fetch the required documents for this workflow. Missing: [MISSING]. Please advise or provide them at your earliest convenience.\n\nThanks,\nAAT Agent';
 
@@ -154,21 +141,35 @@
 
   // ---------------- Session ----------------
   function saveSession() {
-    sessionStorage.setItem('aat-session', JSON.stringify({ division: state.division, userName: state.userName }));
+    sessionStorage.setItem(
+      'aat-session',
+      JSON.stringify({ division: state.division, userName: state.userName, email: state.email })
+    );
   }
 
   function restoreSession() {
     try {
       const raw = sessionStorage.getItem('aat-session');
-      if (!raw) return false;
+      if (!raw) return null;
       const saved = JSON.parse(raw);
-      if (!saved.division || !saved.userName) return false;
-      state.division = saved.division;
-      state.userName = saved.userName;
-      return true;
+      if (!saved.division || !saved.email) return null;
+      return saved;
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  // The role is resolved server-side from the email, not asserted by the client.
+  async function resolveProfile(email, division) {
+    const payload = await api('/session/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, division }),
+    });
+    state.profile = payload.profile;
+    state.email = payload.profile.email;
+    state.userName = payload.profile.name;
+    return state.profile;
   }
 
   // ---------------- Login ----------------
@@ -188,36 +189,79 @@
   const loginForm = qs('#login-form');
   const loginError = qs('#login-error');
 
-  loginForm.addEventListener('submit', (e) => {
+  const loginSubmit = qs('#login-submit');
+
+  loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const user = qs('#login-user').value.trim();
     if (!state.division) { loginError.textContent = 'Choose a division to continue.'; return; }
     if (!user) { loginError.textContent = 'Enter a username.'; return; }
     loginError.textContent = '';
-    state.userName = user;
-    saveSession();
-    enterApp();
+    loginSubmit.disabled = true;
+    try {
+      await resolveProfile(user, state.division);
+      saveSession();
+      await enterApp();
+    } catch (err) {
+      loginError.textContent = err.message;
+    } finally {
+      loginSubmit.disabled = false;
+    }
   });
 
-  function enterApp() {
+  async function enterApp() {
     qs('#screen-login').classList.add('hidden');
     qs('#app').classList.remove('hidden');
     qs('.js-division-badge').textContent = divisionLabels[state.division] || state.division;
-    qs('.js-user-name').textContent = state.userName;
-    renderDashboard();
+    renderIdentity();
     renderWorkflowBar();
     switchView('dashboard');
+    await loadCatalog();
+    await refreshDashboard();
     if (state.division === 'retail') {
       toast('Office / Retail mirrors Multifamily in Phase 2 — showing the Phase 1 preview.', 'info');
     }
   }
 
+  function renderIdentity() {
+    const p = state.profile || {};
+    qs('.js-user-name').textContent = p.name || state.userName || '—';
+    qs('.js-user-role').textContent = p.role_label || '—';
+    qs('.js-user-initials').textContent = (p.name || '?')
+      .split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase();
+    qs('#ud-admin').classList.toggle('hidden', !can('manage_users'));
+  }
+
+  // ---------------- User menu ----------------
+  const userMenuBtn = qs('#user-menu-btn');
+  const userDropdown = qs('#user-dropdown');
+
+  function closeUserMenu() {
+    userDropdown.classList.add('hidden');
+    userMenuBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  userMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = userDropdown.classList.toggle('hidden');
+    userMenuBtn.setAttribute('aria-expanded', String(!open));
+  });
+  document.addEventListener('click', closeUserMenu);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeUserMenu(); });
+  qsa('.ud-item[data-target]', userDropdown).forEach((item) => {
+    item.addEventListener('click', () => { closeUserMenu(); switchView(item.dataset.target); });
+  });
+
   qs('#signout-btn').addEventListener('click', () => {
     sessionStorage.removeItem('aat-session');
+    closeUserMenu();
     state.division = null;
     state.userName = null;
+    state.email = null;
+    state.profile = null;
     state.selectedWorkflow = null;
     state.uploads = [];
+    state.approvals = [];
     divisionOptions.forEach((b) => { b.classList.remove('selected'); b.setAttribute('aria-checked', 'false'); });
     qs('#login-user').value = '';
     qs('#login-pass').value = '';
@@ -231,12 +275,49 @@
     tab.addEventListener('click', () => switchView(tab.dataset.target));
   });
 
+  const VIEWS = ['dashboard', 'workflows', 'repository', 'register', 'profile', 'admin'];
+
   function switchView(name) {
-    qs('#view-dashboard').classList.toggle('hidden', name !== 'dashboard');
-    qs('#view-workflows').classList.toggle('hidden', name !== 'workflows');
-    qs('#view-register').classList.toggle('hidden', name !== 'register');
+    VIEWS.forEach((v) => qs(`#view-${v}`).classList.toggle('hidden', v !== name));
     qsa('.nav-tab').forEach((t) => t.classList.toggle('active', t.dataset.target === name));
     if (name === 'register') loadRegister();
+    if (name === 'workflows') loadUseCaseOverviews();
+    if (name === 'repository') loadRepository();
+    if (name === 'profile') renderProfile();
+    if (name === 'admin') loadAdmin();
+  }
+
+  // ---------------- Data loading ----------------
+  // The backend owns which documents each workflow requires, so the checklist is
+  // checked against something real rather than a list duplicated in the client.
+  async function loadCatalog() {
+    try {
+      const payload = await api('/workflows/catalog');
+      payload.workflows.forEach((wf) => {
+        if (!workflows[wf.id]) return;
+        workflows[wf.id].docs = wf.documents.map((d) => d.name);
+        workflows[wf.id].steps = wf.steps;
+        workflows[wf.id].folder = wf.folder;
+      });
+    } catch {
+      // Keep the built-in definitions if the catalog is unreachable.
+    }
+  }
+
+  async function refreshDashboard() {
+    try {
+      const summary = await api(`/dashboard/summary?division=${state.division}`);
+      state.approvals = summary.approvals || [];
+      state.approvalCounts = summary.approval_counts || {};
+      state.summary = summary;
+      folders.length = 0;
+      (summary.folders || []).forEach((f) => folders.push(f));
+      qs('#stat-documents').textContent = summary.documents_total;
+      qs('#stat-leases').textContent = summary.leases_expiring_soon;
+    } catch (err) {
+      toast(`Could not load dashboard data: ${err.message}`, 'error');
+    }
+    renderDashboard();
   }
 
   // ---------------- Dashboard ----------------
@@ -247,8 +328,10 @@
     qs('#dashboard-subtitle').textContent = `${divisionLabels[state.division]} · here's what's happening across your repository today.`;
 
     qs('#stat-workflows').textContent = Object.keys(workflows).length;
-    qs('#stat-documents').textContent = folders.reduce((sum, f) => sum + f.count, 0);
-    qs('#stat-leases').textContent = 3;
+    if (state.summary) {
+      qs('#stat-documents').textContent = state.summary.documents_total;
+      qs('#stat-leases').textContent = state.summary.leases_expiring_soon;
+    }
     qs('#stat-pending').textContent = state.approvals.length;
 
     renderApprovals();
@@ -274,13 +357,19 @@
       });
     });
 
+    // Chips open the Repository Folder page filtered to that folder.
     const strip = qs('#folder-strip');
     strip.innerHTML = '';
     folders.forEach((f) => {
-      const chip = document.createElement('div');
+      const chip = document.createElement('button');
       chip.className = 'folder-chip';
+      chip.type = 'button';
       chip.innerHTML = `${iconSvg('i-folder')}<span class="f-name"></span><span class="f-count">${f.count} docs</span>`;
       chip.querySelector('.f-name').textContent = f.name;
+      chip.addEventListener('click', () => {
+        state.repo.folder = f.name;
+        switchView('repository');
+      });
       strip.appendChild(chip);
     });
 
@@ -296,81 +385,146 @@
   }
 
   // ---------------- Approvals queue ----------------
+  // Grouped by use case rather than one flat list: with five workflows feeding
+  // one queue, a flat list buries the workflow you actually came here for.
   function renderApprovals() {
-    const list = qs('#approval-list');
-    list.innerHTML = '';
+    const wrap = qs('#approval-groups');
+    wrap.innerHTML = '';
 
-    if (!state.approvals.length) {
-      const li = document.createElement('li');
-      li.className = 'approval-empty';
-      li.innerHTML = `${iconSvg('i-check')}<span>Nothing awaiting your approval. You're all caught up.</span>`;
-      list.appendChild(li);
+    const grouped = new Map();
+    state.approvals.forEach((ap) => {
+      if (!grouped.has(ap.workflow)) grouped.set(ap.workflow, []);
+      grouped.get(ap.workflow).push(ap);
+    });
+
+    const totalCases = state.approvals.length;
+    const groupCount = grouped.size;
+    const idleCount = Object.keys(workflows).length - groupCount;
+    qs('#approvals-summary').textContent = totalCases
+      ? `${totalCases} case${totalCases === 1 ? '' : 's'} across ${groupCount} use case${groupCount === 1 ? '' : 's'}` +
+        (idleCount > 0 ? ` · ${idleCount} clear` : '')
+      : 'Grouped by use case — open a group to work through it';
+
+    qs('#clear-samples').classList.toggle('hidden', !state.approvals.some((a) => a.source === 'sample'));
+
+    if (!totalCases) {
+      wrap.innerHTML = `<div class="approval-empty">${iconSvg('i-check')}<span>Nothing awaiting your approval. You're all caught up.</span></div>`;
       return;
     }
 
-    state.approvals.forEach((ap) => {
-      const wf = workflows[ap.workflow];
-      const expanded = state.expandedApproval === ap.id;
-      const li = document.createElement('li');
-      li.className = `approval-item${expanded ? ' expanded' : ''}`;
+    // Keep group order stable — follow the workflow catalog, not insertion order.
+    Object.keys(workflows).forEach((wfId) => {
+      const items = grouped.get(wfId);
+      if (!items || !items.length) return;
+
+      const wf = workflows[wfId];
+      const open = state.expandedGroup === wfId;
+      const missingCases = items.filter((i) => i.missing.length).length;
+
+      const section = document.createElement('section');
+      section.className = `ap-group${open ? ' expanded' : ''}`;
 
       const head = document.createElement('button');
-      head.className = 'approval-head';
-      head.setAttribute('aria-expanded', String(expanded));
-      head.setAttribute('aria-controls', `ap-body-${ap.id}`);
+      head.className = 'ap-group-head';
+      head.setAttribute('aria-expanded', String(open));
       head.innerHTML = `
-        <span class="ap-icon">${iconSvg(wf.icon)}</span>
-        <span class="ap-main">
-          <span class="ap-subject"></span>
-          <span class="ap-meta"></span>
+        <span class="apg-icon">${iconSvg(wf.icon)}</span>
+        <span class="apg-main">
+          <span class="apg-title"></span>
+          <span class="apg-sub"></span>
         </span>
-        <span class="ap-flag">${ap.missing.length ? `${ap.missing.length} missing` : 'Ready'}</span>
+        <span class="apg-count">${items.length}</span>
         <span class="ap-chevron">${iconSvg('i-chevron')}</span>
       `;
-      head.querySelector('.ap-subject').textContent = ap.subject;
-      head.querySelector('.ap-meta').textContent = `${wf.title} · ${ap.property} / ${ap.unit} · ${ap.raised}`;
-      head.querySelector('.ap-flag').classList.add(ap.missing.length ? 'flag-warn' : 'flag-ok');
+      head.querySelector('.apg-title').textContent = wf.title;
+      head.querySelector('.apg-sub').textContent = missingCases
+        ? `${missingCases} of ${items.length} waiting on missing documents`
+        : `All ${items.length === 1 ? 'documents' : 'cases'} complete — ready to sign off`;
       head.addEventListener('click', () => {
-        state.expandedApproval = expanded ? null : ap.id;
+        state.expandedGroup = open ? null : wfId;
         renderApprovals();
       });
 
       const body = document.createElement('div');
-      body.className = 'approval-body';
-      body.id = `ap-body-${ap.id}`;
-      if (!expanded) body.classList.add('hidden');
+      body.className = 'ap-group-body';
+      if (!open) body.classList.add('hidden');
 
-      const docItem = (text, icon) => `<li>${iconSvg(icon)}<span>${text}</span></li>`;
-      body.innerHTML = `
-        <div class="ap-reason"><strong>Why it needs you:</strong> <span class="ap-reason-text"></span></div>
-        <div class="ap-docs">
-          <div>
-            <h4>Found</h4>
-            <ul class="found-list">${ap.found.map((d) => docItem(d, 'i-check')).join('') || docItem('None', 'i-info')}</ul>
-          </div>
-          <div>
-            <h4>Missing</h4>
-            <ul class="missing-list">${ap.missing.map((d) => docItem(d, 'i-x')).join('') || docItem('None', 'i-info')}</ul>
-          </div>
-        </div>
-        <div class="ap-actions">
-          <button class="btn btn-primary btn-sm" data-ap-open="${ap.id}">
-            Review in workflow <svg class="icon"><use href="#i-arrow-right"/></svg>
-          </button>
-          <button class="btn btn-secondary btn-sm" data-ap-approve="${ap.id}">Approve &amp; store</button>
-          <button class="btn btn-text btn-sm" data-ap-return="${ap.id}">Send back</button>
-        </div>
-      `;
-      body.querySelector('.ap-reason-text').textContent = ap.reason;
+      const list = document.createElement('ul');
+      list.className = 'approval-list';
+      items.forEach((ap) => list.appendChild(buildApprovalItem(ap, wf)));
+      body.appendChild(list);
 
-      li.appendChild(head);
-      li.appendChild(body);
-      list.appendChild(li);
+      section.appendChild(head);
+      section.appendChild(body);
+      wrap.appendChild(section);
     });
 
-    qsa('[data-ap-open]', list).forEach((btn) => btn.addEventListener('click', () => openApprovalInWorkflow(btn.dataset.apOpen)));
-    qsa('[data-ap-approve]', list).forEach((btn) => btn.addEventListener('click', () => resolveApproval(btn.dataset.apApprove, 'approved')));
-    qsa('[data-ap-return]', list).forEach((btn) => btn.addEventListener('click', () => resolveApproval(btn.dataset.apReturn, 'returned')));
+    qsa('[data-ap-open]', wrap).forEach((btn) => btn.addEventListener('click', () => openApprovalInWorkflow(Number(btn.dataset.apOpen))));
+    qsa('[data-ap-approve]', wrap).forEach((btn) => btn.addEventListener('click', () => resolveApproval(Number(btn.dataset.apApprove), 'approved')));
+    qsa('[data-ap-return]', wrap).forEach((btn) => btn.addEventListener('click', () => resolveApproval(Number(btn.dataset.apReturn), 'returned')));
+  }
+
+  function buildApprovalItem(ap, wf) {
+    const expanded = state.expandedApproval === ap.id;
+    const li = document.createElement('li');
+    li.className = `approval-item${expanded ? ' expanded' : ''}`;
+
+    const head = document.createElement('button');
+    head.className = 'approval-head';
+    head.setAttribute('aria-expanded', String(expanded));
+    head.setAttribute('aria-controls', `ap-body-${ap.id}`);
+    head.innerHTML = `
+      <span class="ap-ref"></span>
+      <span class="ap-main">
+        <span class="ap-subject"></span>
+        <span class="ap-meta"></span>
+      </span>
+      ${ap.source === 'sample' ? '<span class="ap-sample">sample</span>' : ''}
+      <span class="ap-flag">${ap.missing.length ? `${ap.missing.length} missing` : 'Ready'}</span>
+      <span class="ap-chevron">${iconSvg('i-chevron')}</span>
+    `;
+    head.querySelector('.ap-ref').textContent = ap.reference;
+    head.querySelector('.ap-subject').textContent = ap.subject;
+    head.querySelector('.ap-meta').textContent =
+      [ap.property, ap.unit].filter(Boolean).join(' / ') + (ap.raised ? ` · ${ap.raised}` : '');
+    head.querySelector('.ap-flag').classList.add(ap.missing.length ? 'flag-warn' : 'flag-ok');
+    head.addEventListener('click', () => {
+      state.expandedApproval = expanded ? null : ap.id;
+      renderApprovals();
+    });
+
+    const body = document.createElement('div');
+    body.className = 'approval-body';
+    body.id = `ap-body-${ap.id}`;
+    if (!expanded) body.classList.add('hidden');
+
+    const docItem = (text, icon) => `<li>${iconSvg(icon)}<span>${esc(text)}</span></li>`;
+    const approveDisabled = can('approve_workflow') ? '' : 'disabled title="Your role cannot sign off."';
+    body.innerHTML = `
+      <div class="ap-reason"><strong>Why it needs you:</strong> <span class="ap-reason-text"></span></div>
+      <div class="ap-docs">
+        <div>
+          <h4>Found</h4>
+          <ul class="found-list">${ap.found.map((d) => docItem(d, 'i-check')).join('') || docItem('None', 'i-info')}</ul>
+        </div>
+        <div>
+          <h4>Missing</h4>
+          <ul class="missing-list">${ap.missing.map((d) => docItem(d, 'i-x')).join('') || docItem('None', 'i-info')}</ul>
+        </div>
+      </div>
+      <div class="ap-actions">
+        <button class="btn btn-primary btn-sm" data-ap-open="${ap.id}">
+          Review in workflow <svg class="icon"><use href="#i-arrow-right"/></svg>
+        </button>
+        <button class="btn btn-secondary btn-sm" data-ap-approve="${ap.id}" ${approveDisabled}>Approve &amp; store</button>
+        <button class="btn btn-text btn-sm" data-ap-return="${ap.id}">Send back</button>
+      </div>
+    `;
+    body.querySelector('.ap-reason-text').textContent = ap.reason;
+
+    li.appendChild(head);
+    li.appendChild(body);
+    return li;
   }
 
   // Deep-link an approval into the Workflows view, pre-loaded with its context.
@@ -390,12 +544,12 @@
 
     renderMatches();
     runLog.innerHTML = '';
-    logLine(`Opened ${ap.id} — ${ap.subject}`);
+    logLine(`Opened ${ap.reference} — ${ap.subject}`);
     logLine(`${ap.property} / ${ap.unit} · ${ap.reason}`);
     logLine(`Found ${ap.found.length} of ${workflows[ap.workflow].docs.length} required documents.`, ap.missing.length === 0);
     if (ap.missing.length) logLine(`Missing: ${ap.missing.join(', ')}`);
 
-    statusDesc.textContent = `Reviewing ${ap.id} — awaiting your decision.`;
+    statusDesc.textContent = `Reviewing ${ap.reference} — awaiting your decision.`;
     setRunPill('review', 'Needs approval');
     startBtn.disabled = false;
 
@@ -403,30 +557,57 @@
     preEmail.value = EMAIL_TEMPLATE.replace('[MISSING]', ap.missing.length ? ap.missing.join(', ') : 'None');
 
     qs('#view-workflows').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    toast(`Loaded ${ap.id} for review.`, 'info');
+    toast(`Loaded ${ap.reference} for review.`, 'info');
   }
 
-  function resolveApproval(apId, outcome) {
+  // Resolving writes a record row server-side, which is what the Workflows
+  // mini-dashboard reports as "rows logged".
+  async function resolveApproval(apId, outcome) {
     const ap = state.approvals.find((a) => a.id === apId);
     if (!ap) return;
-    state.approvals = state.approvals.filter((a) => a.id !== apId);
+    if (outcome === 'approved' && !can('approve_workflow')) {
+      return toast('Your role does not allow signing off.', 'error');
+    }
+
+    try {
+      await api(`/approvals/${apId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outcome, resolved_by: state.userName || '' }),
+      });
+    } catch (err) {
+      return toast(err.message, 'error');
+    }
+
     if (state.expandedApproval === apId) state.expandedApproval = null;
     if (state.reviewingApproval === apId) state.reviewingApproval = null;
 
     recentActivity.unshift({
       icon: outcome === 'approved' ? 'i-check' : 'i-mail',
       text: outcome === 'approved'
-        ? `${ap.id} approved and stored — ${ap.subject}`
-        : `${ap.id} sent back for correction — ${ap.subject}`,
+        ? `${ap.reference} approved and stored — ${ap.subject}`
+        : `${ap.reference} sent back for correction — ${ap.subject}`,
       time: 'Just now',
     });
 
-    renderDashboard();
+    await refreshDashboard();
+    if (state.selectedWorkflow === ap.workflow) loadWorkflowOverview(ap.workflow);
     toast(
-      outcome === 'approved' ? `${ap.id} approved and stored.` : `${ap.id} sent back for correction.`,
+      outcome === 'approved' ? `${ap.reference} approved and stored.` : `${ap.reference} sent back for correction.`,
       outcome === 'approved' ? 'success' : 'info'
     );
   }
+
+  qs('#clear-samples').addEventListener('click', async () => {
+    try {
+      const res = await api(`/approvals/samples?division=${state.division}`, { method: 'DELETE' });
+      toast(`Removed ${res.removed} sample case${res.removed === 1 ? '' : 's'}.`, 'success');
+      await refreshDashboard();
+      if (state.selectedWorkflow) loadWorkflowOverview(state.selectedWorkflow);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
 
   qs('#stat-pending-tile').addEventListener('click', () => {
     switchView('dashboard');
@@ -510,13 +691,13 @@
     ucFolder.textContent = `Folder · ${wf.folder}`;
     ucIcon.setAttribute('href', `#${wf.icon}`);
 
-    ucDocs.innerHTML = '';
-    wf.docs.forEach((d) => {
-      const li = document.createElement('li');
-      li.innerHTML = `${iconSvg('i-file')}<span></span>`;
-      li.lastElementChild.textContent = d;
-      ucDocs.appendChild(li);
-    });
+    // Render the checklist from whatever overview data is already in hand, then
+    // refresh — selecting a workflow should not blank the panel while it loads.
+    const known = (state.overviews || []).find((o) => o.workflow === id);
+    renderDocChecklist(known ? known.required_documents : null, wf);
+    if (state.overviews.length) renderUseCases();
+    loadUseCaseOverviews();
+    loadSop(id);
 
     uploadList.innerHTML = '';
     state.lastFile = null;
@@ -535,6 +716,291 @@
     setRunPill('idle', 'Idle');
     runLog.innerHTML = '<div class="log-line muted">Waiting for a run…</div>';
   }
+
+  // ---------------- Per-use-case mini-dashboards ----------------
+  // Every workflow gets its own card, whether or not it is the one selected, so
+  // the page answers "where is work piling up?" without clicking through five tabs.
+  const useCaseGrid = qs('#wf-usecases');
+
+  qs('#wf-mini-refresh').addEventListener('click', () => loadUseCaseOverviews());
+
+  async function loadUseCaseOverviews() {
+    if (!useCaseGrid.children.length) {
+      useCaseGrid.innerHTML = '<div class="ai-loading">Loading use case summaries…</div>';
+    }
+    try {
+      const data = await api(`/workflows/overview?division=${state.division}`);
+      state.overviews = data.overviews || [];
+      renderUseCases();
+      // The selected workflow's checklist is driven by the same payload.
+      const mine = state.overviews.find((o) => o.workflow === state.selectedWorkflow);
+      if (mine) renderDocChecklist(mine.required_documents, workflows[state.selectedWorkflow]);
+    } catch (err) {
+      useCaseGrid.innerHTML = '<div class="ai-error"></div>';
+      useCaseGrid.firstElementChild.textContent = err.message;
+    }
+  }
+
+  // Kept for callers that refresh after a single workflow changes.
+  function loadWorkflowOverview() {
+    return loadUseCaseOverviews();
+  }
+
+  function renderUseCases() {
+    const overviews = state.overviews || [];
+    const totalOpen = overviews.reduce((n, o) => n + o.approvals.length, 0);
+    const totalRows = overviews.reduce((n, o) => n + (o.records.rows_logged || 0), 0);
+    qs('#wf-mini-summary').textContent =
+      `${totalOpen} approval${totalOpen === 1 ? '' : 's'} outstanding · ${totalRows} record row${totalRows === 1 ? '' : 's'} logged`;
+
+    useCaseGrid.innerHTML = overviews
+      .map((o) => {
+        const wf = workflows[o.workflow] || { icon: 'i-file', title: o.title };
+        const docs = o.required_documents;
+        const rec = o.records;
+        const selected = state.selectedWorkflow === o.workflow;
+        const complete = docs.present === docs.total;
+
+        return `
+        <article class="uc-card${selected ? ' selected' : ''}" data-uc="${o.workflow}">
+          <header class="uc-card-head">
+            <span class="uc-card-icon">${iconSvg(wf.icon)}</span>
+            <div class="uc-card-title">
+              <h3>${esc(o.title)}</h3>
+              <span>${esc(o.folder)}</span>
+            </div>
+            <button class="btn btn-secondary btn-sm uc-open" data-uc-open="${o.workflow}">
+              ${selected ? 'Selected' : 'Open'}
+            </button>
+          </header>
+
+          <div class="uc-card-stats">
+            <div class="ucs ${o.approvals.length ? 'ucs-alert' : ''}">
+              <span class="ucs-num">${o.approvals.length}</span>
+              <span class="ucs-lbl">outstanding approvals</span>
+            </div>
+            <div class="ucs">
+              <span class="ucs-num">${rec.rows_logged || 0}</span>
+              <span class="ucs-lbl">rows logged</span>
+            </div>
+            <div class="ucs ${complete ? 'ucs-ok' : 'ucs-warn'}">
+              <span class="ucs-num">${docs.present}/${docs.total}</span>
+              <span class="ucs-lbl">required docs</span>
+            </div>
+          </div>
+
+          <div class="uc-card-section">
+            <h4>Outstanding approvals</h4>
+            <ul class="wfm-list">
+              ${o.approvals.length
+                ? o.approvals.slice(0, 3).map((ap) => `<li>
+                    <button class="wfm-link" data-mini-ap="${ap.id}">
+                      <span class="wfm-ref">${esc(ap.reference)}</span>
+                      <span class="wfm-subject">${esc(ap.subject)}</span>
+                    </button>
+                    <span class="wfm-tag ${ap.missing.length ? 'tag-warn' : 'tag-ok'}">${
+                      ap.missing.length ? `${ap.missing.length} missing` : 'ready'
+                    }</span>
+                  </li>`).join('') +
+                  (o.approvals.length > 3
+                    ? `<li class="wfm-more">+${o.approvals.length - 3} more</li>`
+                    : '')
+                : '<li class="wfm-empty">Nothing waiting on a human.</li>'}
+            </ul>
+          </div>
+
+          <div class="uc-card-section">
+            <h4>Record keeping</h4>
+            <p class="uc-card-note">${
+              rec.last_updated
+                ? `Last updated ${esc(formatWhen(rec.last_updated))}${rec.last_updated_by ? ` by ${esc(rec.last_updated_by)}` : ''}.`
+                : 'No rows recorded yet — sign-offs and send-backs land here.'
+            }</p>
+            ${Object.keys(rec.by_outcome || {}).length
+              ? `<ul class="wfm-outcomes">${Object.entries(rec.by_outcome)
+                  .map(([k, v]) => `<li><span class="wfo-count">${v}</span><span>${esc(k.replace(/_/g, ' '))}</span></li>`)
+                  .join('')}</ul>`
+              : ''}
+          </div>
+
+          <div class="uc-card-section">
+            <h4>Record files</h4>
+            <ul class="wfm-files">
+              ${(o.record_files || []).map((f) => `<li>
+                  <a class="wfm-file" href="${esc(f.url)}" target="_blank" rel="noopener">
+                    ${iconSvg('i-download')}<span class="wff-name">${esc(f.name)}</span>
+                  </a>
+                  <span class="wff-meta">${esc(f.label)}${
+                    f.rows != null ? ` · ${f.rows} row${f.rows === 1 ? '' : 's'}` : ''
+                  }</span>
+                </li>`).join('') || '<li class="wfm-empty">No record files yet.</li>'}
+            </ul>
+          </div>
+
+          ${docs.missing.length
+            ? `<p class="uc-card-missing">${iconSvg('i-x')} Missing: ${esc(docs.missing.join(', '))}</p>`
+            : `<p class="uc-card-ready">${iconSvg('i-check')} Every required document is on file.</p>`}
+        </article>`;
+      })
+      .join('');
+
+    qsa('[data-uc-open]', useCaseGrid).forEach((btn) =>
+      btn.addEventListener('click', (e) => { e.stopPropagation(); selectWorkflow(btn.dataset.ucOpen); })
+    );
+    qsa('[data-mini-ap]', useCaseGrid).forEach((btn) =>
+      btn.addEventListener('click', (e) => { e.stopPropagation(); openApprovalInWorkflow(Number(btn.dataset.miniAp)); })
+    );
+  }
+
+  function formatWhen(iso) {
+    if (!iso) return '';
+    const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  // ---------------- Required documents checklist ----------------
+  // `checked` comes from the backend, which matches filenames in each document's
+  // folder. Before it arrives the list still renders, just without status.
+  function renderDocChecklist(checked, wf) {
+    if (!wf) return;
+    const tally = qs('#uc-doc-tally');
+    const hint = qs('#uc-doc-hint');
+    ucDocs.innerHTML = '';
+
+    if (!checked) {
+      tally.textContent = '';
+      hint.textContent = '';
+      wf.docs.forEach((name) => {
+        const li = document.createElement('li');
+        li.className = 'doc-item doc-unknown';
+        li.innerHTML = `${iconSvg('i-file')}<span class="doc-name"></span>`;
+        li.querySelector('.doc-name').textContent = name;
+        ucDocs.appendChild(li);
+      });
+      return;
+    }
+
+    tally.textContent = `${checked.present} / ${checked.total}`;
+    tally.className = `doc-tally ${checked.present === checked.total ? 'tally-ok' : 'tally-warn'}`;
+
+    checked.items.forEach((item) => {
+      const li = document.createElement('li');
+      li.className = `doc-item ${item.present ? 'doc-present' : 'doc-missing'}`;
+      li.innerHTML = `
+        ${iconSvg(item.present ? 'i-check' : 'i-x')}
+        <span class="doc-body">
+          <span class="doc-name"></span>
+          <span class="doc-sub"></span>
+        </span>`;
+      li.querySelector('.doc-name').textContent = item.name;
+      li.querySelector('.doc-sub').textContent = item.present
+        ? item.matched_document.filename
+        : `not in ${item.folder}`;
+      ucDocs.appendChild(li);
+    });
+
+    hint.textContent = checked.missing.length
+      ? `Missing ${checked.missing.length} of ${checked.total}. Upload them below or fetch from the repository.`
+      : 'Everything this workflow needs is in the repository.';
+    hint.className = `doc-hint ${checked.missing.length ? 'hint-warn' : 'hint-ok'}`;
+  }
+
+  // ---------------- Standing instructions (per-workflow reference doc) ----------------
+  const SOP_FIELDS = [
+    { key: 'inputs_expected', label: 'Inputs expected', hint: 'What the agent needs before it can start' },
+    { key: 'steps_taken', label: 'Steps taken', hint: 'What it does, in order, every run' },
+    { key: 'pass_fail_logic', label: 'Pass / fail logic', hint: 'What clears, what fails, what routes to a human' },
+    { key: 'escalation_rules', label: 'Escalation rules', hint: 'When a person must be pulled in, and who' },
+  ];
+
+  const sopPanel = qs('#sop-panel');
+  const sopGrid = qs('#sop-grid');
+
+  async function loadSop(workflowId) {
+    sopPanel.classList.remove('hidden');
+    state.sopEditing = false;
+    sopGrid.innerHTML = '<div class="ai-loading">Loading standing instructions…</div>';
+    try {
+      const sop = await api(`/workflows/${workflowId}/sop?division=${state.division}`);
+      if (state.selectedWorkflow !== workflowId) return;
+      state.sop = sop;
+      renderSop();
+    } catch (err) {
+      sopGrid.innerHTML = '<div class="ai-error"></div>';
+      sopGrid.firstElementChild.textContent = err.message;
+    }
+  }
+
+  function renderSop() {
+    const sop = state.sop;
+    if (!sop) return;
+    const editable = can('edit_sop');
+
+    qs('#sop-meta').textContent =
+      `What the agent does every time this workflow runs · ` +
+      (sop.is_default
+        ? 'AAT defaults, not yet customised'
+        : `edited ${formatWhen(sop.updated_at)}${sop.updated_by ? ` by ${sop.updated_by}` : ''}`);
+
+    qs('#sop-edit').classList.toggle('hidden', state.sopEditing || !editable);
+    qs('#sop-save').classList.toggle('hidden', !state.sopEditing);
+    qs('#sop-cancel').classList.toggle('hidden', !state.sopEditing);
+    qs('#sop-reset').classList.toggle('hidden', !state.sopEditing || sop.is_default);
+
+    sopGrid.innerHTML = SOP_FIELDS.map((f) => `
+      <section class="sop-field">
+        <h4>${f.label}</h4>
+        <p class="sop-hint">${f.hint}</p>
+        ${state.sopEditing
+          ? `<textarea data-sop="${f.key}" rows="7">${esc(sop[f.key] || '')}</textarea>`
+          : `<div class="sop-text">${esc(sop[f.key] || '').replace(/\n/g, '<br>') || '<span class="muted">Not set.</span>'}</div>`}
+      </section>`).join('') +
+      (editable ? '' : `<p class="sop-locked">${iconSvg('i-lock')} Your role can read these instructions but not change them.</p>`);
+  }
+
+  qs('#sop-edit').addEventListener('click', () => {
+    if (!can('edit_sop')) return toast('Your role cannot edit standing instructions.', 'error');
+    state.sopEditing = true;
+    renderSop();
+  });
+
+  qs('#sop-cancel').addEventListener('click', () => {
+    state.sopEditing = false;
+    renderSop();
+  });
+
+  qs('#sop-save').addEventListener('click', async () => {
+    const body = { division: state.division, updated_by: state.userName || '' };
+    qsa('[data-sop]', sopGrid).forEach((el) => { body[el.dataset.sop] = el.value; });
+    try {
+      state.sop = await api(`/workflows/${state.selectedWorkflow}/sop`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      state.sopEditing = false;
+      renderSop();
+      toast('Standing instructions saved.', 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  qs('#sop-reset').addEventListener('click', async () => {
+    try {
+      state.sop = await api(`/workflows/${state.selectedWorkflow}/sop/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ division: state.division, updated_by: state.userName || '' }),
+      });
+      state.sopEditing = false;
+      renderSop();
+      toast('Restored the shipped defaults.', 'info');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
 
   function renderSteps(steps) {
     stepsTrack.innerHTML = '';
@@ -681,6 +1147,7 @@
     const isDar = !!wf.dar;
     const form = new FormData();
     form.append('property_id', propId.value.trim());
+    form.append('division', state.division);
     form.append('upload_file', state.lastFile);
     if (!isDar) {
       form.append('workflow', state.selectedWorkflow);
@@ -708,14 +1175,23 @@
           logLine(payload.save_error);
           toast(payload.save_error, 'error');
         }
+        if (payload.approvals_raised) {
+          logLine(`Raised ${payload.approvals_raised} breach-notice case(s) for escalating units.`, true);
+        }
       } else {
         renderVerdict(payload.verdict);
         setRunPill('done', 'Analyzed');
         statusDesc.textContent = 'Analysis complete — review the findings.';
         logLine(`Verdict: ${payload.verdict.decision} (${payload.verdict.confidence} confidence).`, true);
+        if (payload.approval) {
+          logLine(`Queued ${payload.approval.reference} for human approval.`, true);
+        }
         humanActions.classList.remove('hidden');
         preEmail.value = buildEmail(payload.verdict);
       }
+      // Whatever the run raised should show up in the counters immediately.
+      await refreshDashboard();
+      loadWorkflowOverview(state.selectedWorkflow);
     } catch (err) {
       aiDecision.className = 'pill pill-error';
       aiDecision.textContent = 'Error';
@@ -1148,19 +1624,343 @@
     toast('Email sent (simulated).', 'success');
   });
 
-  qs('#sign-off').addEventListener('click', () => {
+  qs('#sign-off').addEventListener('click', async () => {
+    if (!can('approve_workflow')) return toast('Your role does not allow signing off.', 'error');
     humanActions.classList.add('hidden');
     setRunPill('done', 'Stored');
+
     if (state.reviewingApproval) {
-      const id = state.reviewingApproval;
-      logLine(`${id} approved — documents stored.`, true);
-      resolveApproval(id, 'approved');
+      const ref = state.reviewingApproval;
+      logLine('Approved — documents stored.', true);
+      await resolveApproval(ref, 'approved');
       return;
     }
-    logLine('Signed off — documents stored.', true);
-    toast('Signed off and stored to the repository (simulated).', 'success');
+
+    // A standalone sign-off is still record-keeping, so log it.
+    try {
+      await api(`/workflows/${state.selectedWorkflow}/records`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          division: state.division,
+          outcome: 'signed_off',
+          property_id: propId.value.trim(),
+          unit: unitId.value.trim(),
+          subject: state.lastFile ? state.lastFile.name : workflows[state.selectedWorkflow].title,
+          document_name: state.lastFile ? state.lastFile.name : '',
+          recorded_by: state.userName || '',
+        }),
+      });
+      logLine('Signed off — documents stored and logged to the record file.', true);
+      loadWorkflowOverview(state.selectedWorkflow);
+      toast('Signed off and logged to the workflow record.', 'success');
+    } catch (err) {
+      logLine(`Sign-off recorded locally but not logged: ${err.message}`);
+      toast(err.message, 'error');
+    }
   });
 
+  // ---------------- Repository folder ----------------
+  const repoGrid = qs('#repo-grid');
+  const repoDocuments = qs('#repo-documents');
+  const repoSearch = qs('#repo-search');
+
+  qs('#repo-refresh').addEventListener('click', () => loadRepository());
+  repoSearch.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadRepositoryDocuments(); });
+
+  async function loadRepository() {
+    repoGrid.innerHTML = '<div class="ai-loading">Loading folders…</div>';
+    try {
+      const data = await api(`/repository/folders?division=${state.division}`);
+      state.repo.folders = data.folders;
+      state.repo.total = data.total;
+      renderRepoFolders();
+      await loadRepositoryDocuments();
+    } catch (err) {
+      repoGrid.innerHTML = '<div class="ai-error"></div>';
+      repoGrid.firstElementChild.textContent = err.message;
+    }
+  }
+
+  function renderRepoFolders() {
+    const allowed = (state.profile && state.profile.allowed_folders) || [];
+    repoGrid.innerHTML = state.repo.folders
+      .map((f) => {
+        const locked = allowed.length && !allowed.includes(f.name);
+        const selected = state.repo.folder === f.name;
+        return `
+        <button class="repo-card${selected ? ' selected' : ''}${locked ? ' locked' : ''}" data-folder="${esc(f.name)}"
+                ${locked ? 'disabled title="Your role does not include this folder."' : ''}>
+          <span class="repo-card-top">
+            ${iconSvg(locked ? 'i-lock' : 'i-folder')}
+            <span class="repo-count">${f.count}</span>
+          </span>
+          <span class="repo-name">${esc(f.name)}</span>
+          <span class="repo-meta">${
+            f.workflows.length ? esc(f.workflows.map((w) => w.title).join(', ')) : 'No workflow reads this folder'
+          }</span>
+          <span class="repo-when">${f.last_upload ? `last upload ${formatWhen(f.last_upload)}` : 'empty'}</span>
+        </button>`;
+      })
+      .join('');
+
+    qsa('[data-folder]', repoGrid).forEach((btn) =>
+      btn.addEventListener('click', () => {
+        state.repo.folder = state.repo.folder === btn.dataset.folder ? '' : btn.dataset.folder;
+        renderRepoFolders();
+        loadRepositoryDocuments();
+      })
+    );
+  }
+
+  async function loadRepositoryDocuments() {
+    const folder = state.repo.folder;
+    const q = repoSearch.value.trim();
+    qs('#repo-list-title').textContent = folder || 'All documents';
+    repoDocuments.innerHTML = '<div class="ai-loading">Loading…</div>';
+    try {
+      const params = new URLSearchParams({ division: state.division });
+      if (folder) params.set('folder', folder);
+      if (q) params.set('q', q);
+      const data = await api(`/repository/documents?${params}`);
+      state.repo.documents = data.documents;
+
+      qs('#repo-list-count').textContent = data.documents.length
+        ? `${data.documents.length} document${data.documents.length === 1 ? '' : 's'}`
+        : '';
+
+      repoDocuments.innerHTML = data.documents.length
+        ? data.documents
+            .map(
+              (d) => `<div class="case-row">
+                <div class="rep-file">${iconSvg('i-file')}<span>${esc(d.filename)}</span></div>
+                <div class="row-spacer"><span class="rep-meta">${esc(d.folder || '—')}${
+                  d.uploaded_at ? ` · ${formatWhen(d.uploaded_at)}` : ''
+                }</span></div>
+                <div class="rep-sev">${
+                  d.redacted ? '<span class="sev sev-ok">redacted</span>' : '<span class="sev sev-yellow">raw</span>'
+                }</div>
+                <div class="row-actions">
+                  <a class="btn btn-text btn-sm" href="/repository/documents/${d.id}/download" target="_blank" rel="noopener">Open</a>
+                </div>
+              </div>`
+            )
+            .join('')
+        : `<div class="empty-state">${
+            folder ? `Nothing in ${esc(folder)} yet.` : 'No documents in the repository yet.'
+          } Uploads land here once they pass redaction.</div>`;
+    } catch (err) {
+      repoDocuments.innerHTML = '<div class="ai-error"></div>';
+      repoDocuments.firstElementChild.textContent = err.message;
+    }
+  }
+
+  // ---------------- Profile ----------------
+  function renderProfile() {
+    const body = qs('#profile-body');
+    const p = state.profile;
+    if (!p) {
+      body.innerHTML = '<div class="empty-state">No session profile loaded.</div>';
+      return;
+    }
+
+    // The meter counts permissions actually held. Roles are not a strict ladder —
+    // a Reviewer signs off but cannot upload, an Agent the reverse — so a rank
+    // bar would claim a containment that does not exist.
+    const meter = Array.from({ length: p.permission_total }, (_, i) =>
+      `<span class="lvl${i < p.permission_count ? ' lvl-on' : ''}"></span>`).join('');
+
+    body.innerHTML = `
+      <div class="profile-grid">
+        <section class="panel profile-card">
+          <div class="profile-head">
+            <div class="avatar big">${esc((p.name || '?').split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase())}</div>
+            <div>
+              <h2>${esc(p.name)}</h2>
+              <p class="profile-email">${esc(p.email)}</p>
+            </div>
+          </div>
+          <dl class="profile-facts">
+            <div><dt>Role</dt><dd><span class="role-pill">${esc(p.role_label)}</span></dd></div>
+            <div><dt>Division</dt><dd>${esc(p.division)}</dd></div>
+            <div><dt>Status</dt><dd>${p.is_active ? '<span class="sev sev-ok">active</span>' : '<span class="sev sev-red">disabled</span>'}</dd></div>
+          </dl>
+          <div class="access-level">
+            <div class="al-head">
+              <span>Access granted</span>
+              <strong>${p.permission_count} of ${p.permission_total} permissions</strong>
+            </div>
+            <div class="al-meter">${meter}</div>
+            <p class="al-desc">${esc(p.role_description)}</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>What this role grants</h2>
+          <ul class="perm-list">
+            ${p.permission_matrix
+              .map(
+                (perm) => `<li class="${perm.granted ? 'perm-on' : 'perm-off'}">
+                  ${iconSvg(perm.granted ? 'i-check' : 'i-x')}<span>${esc(perm.label)}</span>
+                </li>`
+              )
+              .join('')}
+          </ul>
+        </section>
+
+        <section class="panel">
+          <h2>Folders you can reach</h2>
+          ${p.allowed_folders.length
+            ? `<ul class="uc-doclist">${p.allowed_folders
+                .map((f) => `<li>${iconSvg('i-folder')}<span>${esc(f)}</span></li>`)
+                .join('')}</ul>`
+            : '<p class="muted">This role has no folder access. Ask an administrator to assign one.</p>'}
+          <p class="profile-note">Folder scope follows your role. To change it, your role has to change — see an administrator.</p>
+        </section>
+      </div>`;
+  }
+
+  // ---------------- Admin ----------------
+  async function loadAdmin() {
+    const body = qs('#admin-body');
+    if (!can('manage_users')) {
+      body.innerHTML = `
+        <div class="reg-empty">
+          ${iconSvg('i-lock', 'big')}
+          <h3>Administration is restricted</h3>
+          <p>Your role (<strong>${esc(state.profile ? state.profile.role_label : 'unknown')}</strong>)
+          does not grant user management. An administrator or super user can change that from this page.</p>
+        </div>`;
+      return;
+    }
+
+    body.innerHTML = '<div class="ai-loading">Loading users…</div>';
+    try {
+      const data = await api('/admin/users');
+      renderAdmin(data);
+    } catch (err) {
+      body.innerHTML = '<div class="ai-error"></div>';
+      body.firstElementChild.textContent = err.message;
+    }
+  }
+
+  function renderAdmin(data) {
+    const body = qs('#admin-body');
+    const roles = data.roles;
+    const isSuper = state.profile.role === 'super_user';
+
+    const rows = data.users
+      .map((u) => {
+        const self = u.id === state.profile.id;
+        // Only a super user may touch super-user access, in the UI and on the server.
+        const locked = (!isSuper && u.role === 'super_user') || self;
+        const options = roles
+          .map((r) => {
+            const disabled = r.key === 'super_user' && !isSuper ? 'disabled' : '';
+            return `<option value="${r.key}" ${r.key === u.role ? 'selected' : ''} ${disabled}>${esc(r.label)}</option>`;
+          })
+          .join('');
+        return `
+        <div class="admin-row${u.is_active ? '' : ' inactive'}">
+          <div class="adm-who">
+            <span class="avatar sm">${esc((u.name || '?').split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase())}</span>
+            <span class="adm-name">
+              <strong>${esc(u.name)}</strong>
+              <span>${esc(u.email)}</span>
+            </span>
+          </div>
+          <div class="adm-division">${esc(u.division)}</div>
+          <div class="adm-role">
+            <select data-role-for="${u.id}" ${locked ? 'disabled' : ''}>${options}</select>
+            ${self ? '<span class="adm-note">you</span>' : ''}
+          </div>
+          <div class="adm-perms">${u.permissions.length} permission${u.permissions.length === 1 ? '' : 's'}</div>
+          <div class="adm-actions">
+            <button class="btn btn-text btn-sm" data-toggle-active="${u.id}" data-next="${u.is_active ? 'false' : 'true'}"
+                    ${self ? 'disabled title="You cannot disable your own account."' : ''}>
+              ${u.is_active ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+        </div>`;
+      })
+      .join('');
+
+    body.innerHTML = `
+      <section class="panel admin-panel">
+        <div class="section-heading">
+          <h2>Users</h2>
+          <p>Changing a role changes what that person can do immediately.</p>
+        </div>
+        <div class="admin-table">
+          <div class="admin-row admin-head">
+            <div>Person</div><div>Division</div><div>Role</div><div>Grants</div><div></div>
+          </div>
+          ${rows}
+        </div>
+      </section>
+
+      <div class="section-heading">
+        <h2>Roles and permissions</h2>
+        <p>What each role grants, least privileged first</p>
+      </div>
+      <div class="role-grid">
+        ${roles
+          .map(
+            (r) => `<article class="role-card">
+              <div class="role-card-head">
+                <span class="role-pill">${esc(r.label)}</span>
+                <span class="role-level">level ${r.level}</span>
+              </div>
+              <p>${esc(r.description)}</p>
+              <ul class="role-perms">
+                ${data.permissions
+                  .map(
+                    (p) => `<li class="${r.permissions.includes(p.key) ? 'perm-on' : 'perm-off'}">
+                      ${iconSvg(r.permissions.includes(p.key) ? 'i-check' : 'i-x')}<span>${esc(p.label)}</span>
+                    </li>`
+                  )
+                  .join('')}
+              </ul>
+            </article>`
+          )
+          .join('')}
+      </div>`;
+
+    qsa('[data-role-for]', body).forEach((select) =>
+      select.addEventListener('change', () => patchUser(select.dataset.roleFor, { role: select.value }))
+    );
+    qsa('[data-toggle-active]', body).forEach((btn) =>
+      btn.addEventListener('click', () =>
+        patchUser(btn.dataset.toggleActive, { is_active: btn.dataset.next === 'true' })
+      )
+    );
+  }
+
+  async function patchUser(userId, changes) {
+    try {
+      const res = await api(`/admin/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...changes, acting_user_id: state.profile.id }),
+      });
+      toast(`${res.user.name} is now ${res.user.role_label}${res.user.is_active ? '' : ' (disabled)'}.`, 'success');
+      loadAdmin();
+    } catch (err) {
+      toast(err.message, 'error');
+      loadAdmin(); // put the control back where the server says it should be
+    }
+  }
+
   // ---------------- Boot ----------------
-  if (restoreSession()) enterApp();
+  (async function boot() {
+    const saved = restoreSession();
+    if (!saved) return;
+    state.division = saved.division;
+    try {
+      await resolveProfile(saved.email, saved.division);
+      await enterApp();
+    } catch {
+      sessionStorage.removeItem('aat-session');
+    }
+  })();
 })();

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .db import Base
@@ -99,6 +99,79 @@ class DarIncident(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     report = relationship("DarReport", back_populates="incidents")
+
+
+class Approval(Base):
+    """One case waiting on a human decision.
+
+    Previously this queue was seeded in the frontend, which meant it could not be
+    grouped, counted per workflow, or survive a reload. Rows are created when an
+    analysis comes back `needs_human_review`/`reject`, and when a DAR unit triages
+    to escalate — the latter is what feeds a red-flagged unit into Breach Notice.
+    """
+
+    __tablename__ = "approvals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(String, nullable=False, index=True)
+    division = Column(Enum(Division), nullable=False, index=True)
+    property_id = Column(String, nullable=True, index=True)
+    unit = Column(String, nullable=True)
+    subject = Column(String, nullable=False)
+    reason = Column(Text, nullable=True)
+    found_documents = Column(Text, nullable=True)  # newline-delimited
+    missing_documents = Column(Text, nullable=True)  # newline-delimited
+    status = Column(String, nullable=False, default="pending", index=True)
+    source = Column(String, nullable=False, default="analysis")  # analysis | dar | sample
+    raised_at = Column(DateTime, default=datetime.utcnow, index=True)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by = Column(String, nullable=True)
+
+
+class WorkflowSop(Base):
+    """Standing instructions for one workflow — the persistent reference doc.
+
+    This is what the agent is meant to do every time the workflow runs: inputs it
+    expects, steps it takes, how it decides pass/fail, and when it escalates. It
+    lives in the database rather than in code so a division head can edit it from
+    the Workflows page without a deploy.
+    """
+
+    __tablename__ = "workflow_sops"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(String, nullable=False, index=True)
+    division = Column(Enum(Division), nullable=False, index=True)
+    inputs_expected = Column(Text, nullable=True)
+    steps_taken = Column(Text, nullable=True)
+    pass_fail_logic = Column(Text, nullable=True)
+    escalation_rules = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String, nullable=True)
+
+    __table_args__ = (UniqueConstraint("workflow_id", "division", name="uq_sop_workflow_division"),)
+
+
+class WorkflowRecord(Base):
+    """One logged row of record-keeping for a workflow run.
+
+    The Workflows mini-dashboard reports "rows logged / last updated" off this
+    table, and the same rows export as the workflow's record file.
+    """
+
+    __tablename__ = "workflow_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(String, nullable=False, index=True)
+    division = Column(Enum(Division), nullable=False, index=True)
+    property_id = Column(String, nullable=True, index=True)
+    unit = Column(String, nullable=True)
+    subject = Column(String, nullable=True)
+    outcome = Column(String, nullable=False, default="signed_off")
+    decision_note = Column(Text, nullable=True)
+    document_name = Column(String, nullable=True)
+    recorded_by = Column(String, nullable=True)
+    recorded_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class BreachLog(Base):
