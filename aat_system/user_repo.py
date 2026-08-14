@@ -1,8 +1,9 @@
-"""User roster, roles, and what each role actually grants.
+"""User roster, levels, and what each level actually grants.
 
-The Profile and Admin pages read from here. Roles are stored on the user row;
-permissions are derived from the role in config.ROLE_PERMISSIONS rather than
-stored per user, so there is one place to change what a role means.
+An account is a division plus a level. The division is the boundary; the level is
+the depth. Permissions are not stored per user — they are derived from the
+account's (division, level) pair in `permission_repo`, so what a level means is
+changed in one place rather than on every account holding it.
 """
 
 from typing import List, Optional
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .auth import get_allowed_folders
 from .config import (
+    DIVISION_LABELS,
     PERMISSION_LABELS,
     ROLE_DESCRIPTIONS,
     ROLE_LABELS,
@@ -18,42 +20,47 @@ from .config import (
     Division,
     Permission,
     Role,
+    division_key,
     permissions_for,
 )
 from . import permission_repo
 from .models import User
 from .security import get_password_hash
 
-# A starting roster so the Admin page has real rows to manage on a fresh
-# database. Passwords are placeholders — the preview UI does not issue tokens.
-# The last field marks a test account: same mechanics as any other account, but
-# named and grouped as an obvious place to try a role out.
-DEFAULT_ROSTER = [
-    ("admin@aat.com", "Avery Reyes", Division.MULTIFAMILY, Role.SUPER_USER, False),
-    ("sysadmin@aat.com", "Dana Whitfield", Division.MULTIFAMILY, Role.ADMIN, False),
-    ("head.mf@aat.com", "Jordan Blake", Division.MULTIFAMILY, Role.DIVISION_HEAD, False),
-    ("head.retail@aat.com", "Sam Ortega", Division.OFFICE, Role.DIVISION_HEAD, False),
-    ("owner@aat.com", "Priya Raman", Division.MULTIFAMILY, Role.SUBGROUP_OWNER, False),
-    ("reviewer@aat.com", "Chris Nolan", Division.MULTIFAMILY, Role.REVIEWER, False),
-    ("agent@aat.com", "Robin Diaz", Division.MULTIFAMILY, Role.AGENT, False),
-    # Test accounts — one per role, so any level of access can be tried without
-    # editing the roster or reaching for someone's real account.
-    ("test.super@aat.com", "Test Super User", Division.MULTIFAMILY, Role.SUPER_USER, True),
-    ("test.admin@aat.com", "Test Administrator", Division.MULTIFAMILY, Role.ADMIN, True),
-    ("test.head@aat.com", "Test Division Head", Division.MULTIFAMILY, Role.DIVISION_HEAD, True),
-    ("test.owner@aat.com", "Test Subgroup Owner", Division.MULTIFAMILY, Role.SUBGROUP_OWNER, True),
-    ("test.reviewer@aat.com", "Test Reviewer", Division.MULTIFAMILY, Role.REVIEWER, True),
-    ("test.agent@aat.com", "Test Agent", Division.MULTIFAMILY, Role.AGENT, True),
-    ("test.retail@aat.com", "Test Retail Head", Division.OFFICE, Role.DIVISION_HEAD, True),
-]
+# A starting roster so Settings has real rows to manage on a fresh database, and
+# so every division can be signed into at every level. Passwords are placeholders
+# — the preview UI does not issue tokens. Each division gets its *own* super
+# admin: the title belongs to a business line, not to the company.
+#
+# The last field marks a test account: same mechanics as any other, but named and
+# grouped as an obvious place to try a level out.
+def _roster_for(division: Division, slug: str, names: tuple) -> list:
+    """One division's three levels, plus a test account for each."""
+    super_name, admin_name, general_name = names
+    return [
+        (f"super.{slug}@aat.com", super_name, division, Role.SUPER_ADMIN, False),
+        (f"admin.{slug}@aat.com", admin_name, division, Role.ADMIN, False),
+        (f"user.{slug}@aat.com", general_name, division, Role.GENERAL, False),
+        (f"test.super.{slug}@aat.com", "Test Super Admin", division, Role.SUPER_ADMIN, True),
+        (f"test.admin.{slug}@aat.com", "Test Admin", division, Role.ADMIN, True),
+        (f"test.user.{slug}@aat.com", "Test General", division, Role.GENERAL, True),
+    ]
+
+
+DEFAULT_ROSTER = (
+    _roster_for(Division.MULTIFAMILY, "residential", ("Avery Reyes", "Dana Whitfield", "Robin Diaz"))
+    + _roster_for(Division.OFFICE, "retail", ("Sam Ortega", "Priya Raman", "Chris Nolan"))
+    + _roster_for(Division.CONSTRUCTION, "construction", ("Marisol Vega", "Theo Nakamura", "Alex Duarte"))
+)
 
 TEST_ACCOUNT_EMAILS = {email for email, _n, _d, _r, is_test in DEFAULT_ROSTER if is_test}
 
 DEFAULT_PASSWORD = "prototype"
 
-# An email that is not on the roster gets the least-privileged role. It is the
-# safe default: a new account can run work, but cannot sign off or manage anyone.
-FALLBACK_ROLE = Role.AGENT
+# An email that is not on the roster gets the lowest level. It is the safe
+# default: a new account can run work and see its own, but cannot sign off,
+# oversee anyone, or manage access.
+FALLBACK_ROLE = Role.GENERAL
 
 
 def seed_roster(db: Session) -> int:
@@ -82,8 +89,9 @@ def resolve_session_user(db: Session, email: str, division: Division, name: str 
     """Look up the signing-in user, provisioning at least privilege if unknown.
 
     The preview UI does not issue tokens, so this is how a session gets a real
-    role: the email is matched against the roster. Anything unrecognised becomes
-    an Agent rather than inheriting whatever the caller claims.
+    level: the email is matched against the roster. Anything unrecognised becomes
+    a general user in the division being signed into, rather than inheriting
+    whatever the caller claims.
     """
     email = (email or "").strip().lower()
     user = db.query(User).filter(User.email == email).first()
@@ -141,26 +149,31 @@ def create_account(
 def profile(user: User, db: Optional[Session] = None) -> dict:
     """Everything the Profile page shows about one account.
 
-    With a session, what the role grants is read from the live configuration the
-    Permissions page writes; without one, from the shipped defaults. Every caller
-    that has a session should pass it — the UI gates on these flags, so reading
-    the constant instead would show access that has since been changed.
+    With a session, what the level grants is read from the live configuration for
+    that account's *division* — Construction's admin may hold different
+    permissions from Residential's. Without a session, the shipped defaults.
+    Every caller that has a session should pass it: the UI gates on these flags,
+    so reading the constant instead would show access that has since been changed.
     """
-    granted = permission_repo.granted_for(db, user.role) if db is not None else permissions_for(user.role)
+    granted = (
+        permission_repo.granted_for_user(db, user) if db is not None else permissions_for(user.role)
+    )
     return {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "division": user.division.value,
-        "division_key": "retail" if user.division == Division.OFFICE else "mf",
+        "division_key": division_key(user.division),
+        "division_label": DIVISION_LABELS.get(user.division, user.division.value),
         "role": user.role.value,
         "role_label": ROLE_LABELS.get(user.role, user.role.value),
         "role_description": ROLE_DESCRIPTIONS.get(user.role, ""),
+        # The title as it is actually held: "Super admin, Construction". A level
+        # without its division is only half an answer, because the level does not
+        # reach outside it.
+        "title": f"{ROLE_LABELS.get(user.role, user.role.value)} · {DIVISION_LABELS.get(user.division, '')}",
         "access_level": ROLE_ORDER.index(user.role) + 1 if user.role in ROLE_ORDER else 0,
         "access_levels_total": len(ROLE_ORDER),
-        # The meter is driven by permissions actually held, not by rank: the
-        # operational roles are peers with different duties, so a rank bar would
-        # imply a containment that does not hold. See ROLE_ORDER in config.
         "permission_count": len(granted),
         "permission_total": len(Permission),
         "is_active": bool(user.is_active),
@@ -171,8 +184,13 @@ def profile(user: User, db: Optional[Session] = None) -> dict:
         ],
         "allowed_folders": get_allowed_folders(user),
         "can_manage_users": Permission.MANAGE_USERS.value in granted,
+        "can_manage_roles": Permission.MANAGE_ROLES.value in granted,
         "can_edit_workflow": Permission.EDIT_WORKFLOW.value in granted,
         "can_approve": Permission.APPROVE_WORKFLOW.value in granted,
+        # Whose work this account sees. False means its own only, which is what
+        # separates a general user from the levels overseeing them.
+        "can_view_team": Permission.VIEW_TEAM_ACTIVITY.value in granted,
+        "can_view_all_divisions": Permission.VIEW_ALL_DIVISIONS.value in granted,
     }
 
 
@@ -188,16 +206,16 @@ def roster_accounts(db: Session) -> List[dict]:
     """The seeded accounts, for the prototype login screen's quick pick.
 
     Deliberately only the seeded roster rather than every provisioned user, so a
-    login screen does not enumerate the user table. Ordered least to most
-    privileged, and each says whether it can edit a workflow definition, since
-    that is the capability the login choice most often decides.
+    login screen does not enumerate the user table. Each entry carries its
+    division, because the same level in a different division is a different
+    account with no reach into this one.
     """
     accounts = []
     for email, _name, _division, _role, is_test in DEFAULT_ROSTER:
         user = db.query(User).filter(User.email == email).first()
         if not user:
             continue
-        granted = permission_repo.granted_for(db, user.role)
+        granted = permission_repo.granted_for_user(db, user)
         accounts.append(
             {
                 "email": user.email,
@@ -205,20 +223,26 @@ def roster_accounts(db: Session) -> List[dict]:
                 "role": user.role.value,
                 "role_label": ROLE_LABELS.get(user.role, user.role.value),
                 "role_description": ROLE_DESCRIPTIONS.get(user.role, ""),
-                "division_key": "retail" if user.division == Division.OFFICE else "mf",
+                "division_key": division_key(user.division),
+                "division_label": DIVISION_LABELS.get(user.division, user.division.value),
                 "can_edit_workflow": Permission.EDIT_WORKFLOW.value in granted,
+                "can_view_team": Permission.VIEW_TEAM_ACTIVITY.value in granted,
                 "is_test": is_test,
             }
         )
-    accounts.sort(key=lambda a: ROLE_ORDER.index(Role(a["role"])) if Role(a["role"]) in ROLE_ORDER else 0)
+    # Most privileged first inside each division: the account someone reaches for
+    # to set things up is at the top.
+    accounts.sort(
+        key=lambda a: -(ROLE_ORDER.index(Role(a["role"])) if Role(a["role"]) in ROLE_ORDER else 0)
+    )
     return accounts
 
 
-def role_catalog(db: Optional[Session] = None) -> List[dict]:
-    """Every role and what it grants — the Admin page's reference table.
+def role_catalog(db: Optional[Session] = None, division: Optional[Division] = None) -> List[dict]:
+    """Every level and what it grants, for the Settings role menus.
 
-    Reads the live grants when given a session, so the Admin page agrees with
-    the Permissions page rather than quoting the shipped defaults back.
+    Reads the live grants for a division when given one, so the level menu agrees
+    with the permissions matrix rather than quoting shipped defaults back.
     """
     return [
         {
@@ -227,7 +251,9 @@ def role_catalog(db: Optional[Session] = None) -> List[dict]:
             "description": ROLE_DESCRIPTIONS.get(role, ""),
             "level": index + 1,
             "permissions": (
-                permission_repo.granted_for(db, role) if db is not None else permissions_for(role)
+                permission_repo.granted_for(db, division, role)
+                if db is not None and division is not None
+                else permissions_for(role)
             ),
         }
         for index, role in enumerate(ROLE_ORDER)

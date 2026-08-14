@@ -16,7 +16,17 @@ from .db import Base, engine, SessionLocal, get_db
 from .models import User, Folder, Document, Lease
 from .auth import assert_division_access, assert_folder_access, get_allowed_folders
 from .document_repo import ingest_document, scan_expired_leases, get_or_create_folder
-from .config import ARCHIVE_ROOT, Division, Permission, Role, CORE_FOLDERS
+from .config import (
+    ARCHIVE_ROOT,
+    DIVISION_KEYS,
+    DIVISION_LABELS,
+    Division,
+    Permission,
+    Role,
+    division_key,
+    folders_for,
+    resolve_division_key,
+)
 from .security import authenticate_user, create_access_token, get_current_active_user, get_password_hash
 from .utils import ensure_storage_directories
 from . import (
@@ -62,12 +72,13 @@ class ProfileCreateRequest(BaseModel):
     name: str = ""
     email: str
     division: str = "mf"
-    role: Role = Role.AGENT
+    role: Role = Role.GENERAL
     password: str = ""
     acting_user_id: Optional[int] = None
 
 
 class RolePermissionsRequest(BaseModel):
+    division: str = "mf"
     permissions: List[str] = []
     updated_by: str = ""
 
@@ -94,11 +105,9 @@ class ApprovalResolveRequest(BaseModel):
 app = FastAPI(title="AAT System")
 
 # The UI identifies divisions by short key; the DB stores the full enum value.
-DIVISION_KEYS = {"mf": Division.MULTIFAMILY, "retail": Division.OFFICE}
-
-
+# The mapping itself lives in config, so adding a business line is one edit.
 def resolve_division(key: str) -> Division:
-    return DIVISION_KEYS.get(key, Division.MULTIFAMILY)
+    return resolve_division_key(key)
 
 
 static_dir = Path(__file__).resolve().parent.parent / "static"
@@ -132,7 +141,10 @@ def startup_event():
     ensure_storage_directories()
     with SessionLocal() as db:
         for division in Division:
-            for folder_name in CORE_FOLDERS:
+            # Each division gets its own folder set — Construction's includes
+            # permits, change orders and lien waivers that the others have no use
+            # for.
+            for folder_name in folders_for(division):
                 get_or_create_folder(db, folder_name, division)
         permission_repo.ensure_seeded(db)
         user_repo.seed_roster(db)
@@ -302,7 +314,7 @@ def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
             "count": per_folder.get(name, 0),
             "last_upload": last_upload[name].isoformat() if last_upload.get(name) else None,
         }
-        for name in CORE_FOLDERS
+        for name in folders_for(div)
     ]
 
     now = datetime.utcnow()
@@ -338,7 +350,8 @@ def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
 
     return {
         "division": div.value,
-        "division_key": workflow_repo.division_key(div),
+        "division_key": division_key(div),
+        "division_label": DIVISION_LABELS.get(div, div.value),
         "folders": folders,
         "documents_total": sum(f["count"] for f in folders),
         "leases_expiring_soon": leases_expiring,
@@ -515,7 +528,7 @@ def reference(division: str = "mf", db: Session = Depends(get_db)):
         ],
         "glossary": workflow_repo.GLOSSARY,
         "step_kinds": workflow_repo.STEP_KINDS,
-        "folders": CORE_FOLDERS,
+        "folders": folders_for(div),
         # Division-wide definition history: what changed, when, by whom, and the
         # version to roll back to if a change broke something.
         "change_log": workflow_repo.change_log(db, div),
@@ -635,54 +648,78 @@ def session_accounts(db: Session = Depends(get_db)):
 
 
 @app.get("/roles")
-def list_roles(db: Session = Depends(get_db)):
-    """Every role, its access level, and the permissions it grants."""
-    return {"roles": user_repo.role_catalog(db), "permissions": user_repo.permission_catalog()}
+def list_roles(division: str = "mf", db: Session = Depends(get_db)):
+    """Every level, its rank, and what it grants in the given division."""
+    div = resolve_division(division)
+    return {
+        "roles": user_repo.role_catalog(db, div),
+        "permissions": user_repo.permission_catalog(),
+        "divisions": permission_repo.division_catalog(),
+    }
 
 
 @app.get("/admin/users")
 def admin_list_users(division: str = "", db: Session = Depends(get_db)):
+    """The roster. Scoped to one division unless asked for all of them.
+
+    Settings passes the division being administered, because a super admin runs
+    one business line: seeing every account in the company is a different
+    capability (`view_all_divisions`) that no level holds by default.
+    """
     div = DIVISION_KEYS.get(division) if division else None
     return {
         "users": user_repo.list_users(db, division=div),
-        "roles": user_repo.role_catalog(db),
+        "roles": user_repo.role_catalog(db, div or Division.MULTIFAMILY),
         "permissions": user_repo.permission_catalog(),
+        "divisions": permission_repo.division_catalog(),
     }
 
 
 # ---------------- Permissions: what each role may do ----------------
 
-@app.get("/permissions")
-def get_permissions(db: Session = Depends(get_db)):
-    """The role × permission matrix as currently configured.
-
-    `default` alongside `granted` on each role is what "Restore defaults" goes
-    back to, so the page can show where the live configuration has been changed.
-    """
+def _permission_payload(db: Session, div: Division) -> dict:
     return {
-        "roles": permission_repo.matrix(db),
+        "division": div.value,
+        "division_key": division_key(div),
+        "division_label": DIVISION_LABELS.get(div, div.value),
+        "divisions": permission_repo.division_catalog(),
+        "roles": permission_repo.matrix(db, div),
         "permissions": permission_repo.catalog(),
     }
+
+
+@app.get("/permissions")
+def get_permissions(division: str = "mf", db: Session = Depends(get_db)):
+    """One division's level × permission matrix as currently configured.
+
+    Per division because the levels are per division: Construction's admin is a
+    different person from Residential's, and may be allowed different things.
+    `default` alongside `granted` is what "Restore defaults" goes back to, so the
+    page can show where the live configuration has been changed.
+    """
+    return _permission_payload(db, resolve_division(division))
 
 
 @app.put("/permissions/{role}")
 def put_role_permissions(
     role: Role, payload: RolePermissionsRequest, db: Session = Depends(get_db)
 ):
-    """Replace what one role may do.
+    """Replace what one level may do in one division.
 
     This changes what the system allows, not merely what the UI offers: every
     gate resolves through the same configuration.
     """
-    permission_repo.set_for(db, role, payload.permissions, updated_by=payload.updated_by)
-    return {"roles": permission_repo.matrix(db), "permissions": permission_repo.catalog()}
+    div = resolve_division(payload.division)
+    permission_repo.set_for(db, div, role, payload.permissions, updated_by=payload.updated_by)
+    return _permission_payload(db, div)
 
 
 @app.post("/permissions/reset")
 def reset_permissions(payload: RolePermissionsRequest, db: Session = Depends(get_db)):
-    """Put every role back to the permissions the system ships with."""
-    permission_repo.reset(db, updated_by=payload.updated_by)
-    return {"roles": permission_repo.matrix(db), "permissions": permission_repo.catalog()}
+    """Put one division's levels back to the permissions the system ships with."""
+    div = resolve_division(payload.division)
+    permission_repo.reset(db, div, updated_by=payload.updated_by)
+    return _permission_payload(db, div)
 
 
 @app.post("/admin/users")
@@ -696,16 +733,30 @@ def admin_create_user(payload: ProfileCreateRequest, db: Session = Depends(get_d
     actor = db.get(User, payload.acting_user_id) if payload.acting_user_id else None
     if actor is None:
         raise HTTPException(status_code=403, detail="An acting account is required.")
-    if not permission_repo.role_has(db, actor.role, Permission.MANAGE_USERS):
+    if not permission_repo.role_has(db, actor.division, actor.role, Permission.MANAGE_USERS):
         raise HTTPException(
             status_code=403,
             detail=(
-                f"Your role ({actor.role.value}) does not grant 'manage_users'. "
+                f"Your level ({actor.role.value}) does not grant 'manage_users'. "
                 "Grant it under Role permissions to create accounts."
             ),
         )
-    if payload.role == Role.SUPER_USER and actor.role != Role.SUPER_USER:
-        raise HTTPException(status_code=403, detail="Only a super user can create a super user.")
+
+    target_division = resolve_division(payload.division)
+    # An admin runs one division. Creating accounts in another needs the
+    # cross-division permission, which no level holds by default.
+    if target_division != actor.division and not permission_repo.role_has(
+        db, actor.division, actor.role, Permission.VIEW_ALL_DIVISIONS
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"You administer {actor.division.value}. Creating an account in "
+                f"{target_division.value} needs 'view_all_divisions'."
+            ),
+        )
+    if payload.role == Role.SUPER_ADMIN and actor.role != Role.SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail="Only a super admin can create a super admin.")
 
     try:
         user = user_repo.create_account(
@@ -737,19 +788,30 @@ def admin_update_user(user_id: int, payload: UserUpdateRequest, db: Session = De
         raise HTTPException(status_code=403, detail="An acting administrator is required.")
 
     needed = Permission.MANAGE_ROLES if payload.role is not None else Permission.MANAGE_USERS
-    if not permission_repo.role_has(db, actor.role, needed):
+    if not permission_repo.role_has(db, actor.division, actor.role, needed):
         raise HTTPException(
             status_code=403,
-            detail=f"Your role ({actor.role.value}) does not grant '{needed.value}'.",
+            detail=f"Your level ({actor.role.value}) does not grant '{needed.value}'.",
         )
 
-    # Only a super user can create or unmake another super user.
-    touches_super = Role.SUPER_USER in (payload.role, target.role)
-    if touches_super and actor.role != Role.SUPER_USER:
-        raise HTTPException(status_code=403, detail="Only a super user can change super-user access.")
+    # An account in another division is someone else's to administer.
+    if target.division != actor.division and not permission_repo.role_has(
+        db, actor.division, actor.role, Permission.VIEW_ALL_DIVISIONS
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"That account belongs to {target.division.value}, which you do not administer.",
+        )
+
+    # Only a super admin can create or unmake another super admin.
+    touches_super = Role.SUPER_ADMIN in (payload.role, target.role)
+    if touches_super and actor.role != Role.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Only a super admin can change super-admin access."
+        )
 
     if actor.id == target.id and payload.role is not None and payload.role != actor.role:
-        raise HTTPException(status_code=400, detail="You cannot change your own role.")
+        raise HTTPException(status_code=400, detail="You cannot change your own level.")
 
     if payload.role is not None:
         target.role = payload.role

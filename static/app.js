@@ -18,7 +18,11 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
     );
 
-  const divisionLabels = { mf: 'Residential / Multifamily', retail: 'Office / Retail' };
+  const divisionLabels = {
+    mf: 'Residential / Multifamily',
+    retail: 'Office / Retail',
+    construction: 'Construction',
+  };
 
   // Step kinds: label + the colour the node and narrative section carry.
   const KINDS = {
@@ -44,6 +48,8 @@
     changeLogFilter: '', // '' = every use case in the division
     permissions: null, // the role × permission matrix, as loaded
     settingsSection: 'profiles', // which Settings section is open
+    settingsDivision: null, // which division's levels are being configured
+    loginAccounts: null, // seeded accounts, fetched once for the login picker
   };
 
   const can = (permission) => !!(state.profile && state.profile.permissions.includes(permission));
@@ -143,7 +149,9 @@
     const p = state.profile;
     if (!p) return;
     qs('.js-user-name').textContent = p.name;
-    qs('.js-user-role').textContent = p.role_label;
+    // A level is only meaningful with its division, since it does not reach past
+    // one: "Super admin, Construction", not "Super admin".
+    qs('.js-user-role').textContent = `${p.role_label} · ${divisionLabels[p.division_key] || ''}`;
     qs('.js-user-initials').textContent = initials(p.name);
     qs('.js-division-badge').textContent = divisionLabels[state.division] || p.division;
   }
@@ -157,28 +165,35 @@
       btn.classList.toggle('selected', active);
       btn.setAttribute('aria-checked', active ? 'true' : 'false');
     });
+    // The accounts below are the ones belonging to this division — each division
+    // has its own super admin, so the list follows the picker.
+    renderLoginAccounts();
   }
 
   qsa('.division-option').forEach((btn) =>
     btn.addEventListener('click', () => selectDivision(btn.dataset.division))
   );
 
-  // The seeded accounts, one button each. Which role you sign in as decides
-  // whether you can edit a definition or sign off, so it is worth showing.
+  // The seeded accounts for the chosen division, most privileged first. Which
+  // level you sign in as decides what you can do once inside.
   async function renderLoginAccounts() {
-    let accounts;
-    try {
-      accounts = (await api('/session/accounts')).accounts;
-    } catch (err) {
-      return; // The typed-username path still works without the quick pick.
+    if (!state.loginAccounts) {
+      try {
+        state.loginAccounts = (await api('/session/accounts')).accounts;
+      } catch (err) {
+        return; // The typed-username path still works without the quick pick.
+      }
     }
-    const real = accounts.filter((a) => !a.is_test);
-    const test = accounts.filter((a) => a.is_test);
+    const mine = state.loginAccounts.filter((a) => a.division_key === state.division);
+    const real = mine.filter((a) => !a.is_test);
+    const test = mine.filter((a) => a.is_test);
+
+    qs('.la-label').textContent = `Or sign in to ${divisionLabels[state.division] || ''} as`;
     qs('#login-accounts').innerHTML =
       real.map(loginAccountHtml).join('') +
       (test.length
         ? `<details class="la-test">
-            <summary>Test accounts — one per role (${test.length})</summary>
+            <summary>Test accounts — one per level (${test.length})</summary>
             <div class="la-list">${test.map(loginAccountHtml).join('')}</div>
           </details>`
         : '');
@@ -186,7 +201,6 @@
     qsa('#login-accounts .la-item').forEach((btn) =>
       btn.addEventListener('click', () => {
         qs('#login-user').value = btn.dataset.email;
-        selectDivision(btn.dataset.division);
         qs('#login-form').requestSubmit();
       })
     );
@@ -194,12 +208,12 @@
 
   function loginAccountHtml(a) {
     return `
-      <button type="button" class="la-item" data-email="${esc(a.email)}" data-division="${esc(
-      a.division_key
-    )}" title="${esc(a.role_description)}">
-        <span class="la-role">${esc(a.role_label)}<span class="la-div">${esc(
-      divisionLabels[a.division_key] || ''
-    )}</span></span>
+      <button type="button" class="la-item" data-email="${esc(a.email)}" title="${esc(
+      a.role_description
+    )}">
+        <span class="la-role">${esc(a.role_label)}<span class="la-div">${
+      a.can_view_team ? 'oversees others' : 'own work only'
+    }</span></span>
         <span class="la-email">${esc(a.name)} · ${esc(a.email)}</span>
         <span class="la-grant ${a.can_edit_workflow ? 'can' : 'cannot'}">${
       a.can_edit_workflow ? 'can edit workflows' : 'cannot edit workflows'
@@ -1445,17 +1459,49 @@
 
   async function loadSettings() {
     showSettingsSection(state.settingsSection || 'profiles');
+    // Settings administers one division at a time, because a level only means
+    // something inside one: your own division unless you look at another.
+    const div = state.settingsDivision || state.division;
+    state.settingsDivision = div;
+
     const roster = qs('#settings-roster');
     roster.innerHTML = '<div class="loading">Loading profiles…</div>';
     try {
-      const [users, permissions] = await Promise.all([api('/admin/users'), api('/permissions')]);
+      const [users, permissions] = await Promise.all([
+        api('/admin/users?division=' + encodeURIComponent(div)),
+        api('/permissions?division=' + encodeURIComponent(div)),
+      ]);
       state.permissions = permissions;
+      renderSettingsDivisions(permissions.divisions || []);
       renderCreateProfile(users);
       renderRoster(users);
       renderPermissions();
     } catch (err) {
       roster.innerHTML = `<p class="empty">Could not load settings: ${esc(err.message)}</p>`;
     }
+  }
+
+  // Which division is being administered. Shown as a switcher because the answer
+  // changes both lists below it: its people, and what its levels may do.
+  function renderSettingsDivisions(divisions) {
+    const host = qs('#settings-divisions');
+    const mine = state.profile ? state.profile.division_key : '';
+    host.innerHTML = divisions
+      .map(
+        (d) => `
+        <button type="button" class="sd-tab ${d.key === state.settingsDivision ? 'active' : ''}"
+          data-division="${esc(d.key)}">
+          ${esc(d.label)}${d.key === mine ? '<span class="sd-mine">yours</span>' : ''}
+        </button>`
+      )
+      .join('');
+
+    qsa('#settings-divisions .sd-tab').forEach((tab) =>
+      tab.addEventListener('click', () => {
+        state.settingsDivision = tab.dataset.division;
+        loadSettings();
+      })
+    );
   }
 
   // ---- Create a profile: the account, its division, and the role it holds ----
@@ -1465,7 +1511,7 @@
     const roleOptions = data.roles
       .map(
         (role) =>
-          `<option value="${esc(role.key)}" ${role.key === 'agent' ? 'selected' : ''}>${esc(
+          `<option value="${esc(role.key)}" ${role.key === 'general' ? 'selected' : ''}>${esc(
             role.label
           )}</option>`
       )
@@ -1480,12 +1526,13 @@
           </div>
         </div>
         <p class="panel-hint">
-          The role decides what the account may do — set what that means under
-          <button type="button" class="link-btn" data-goto-permissions="1">Role permissions</button>.
+          The level decides what the account may do <em>in this division</em> — set what that means
+          under <button type="button" class="link-btn" data-goto-permissions="1">Role
+          permissions</button>.
           ${
             canManage
               ? 'Any password works at sign-in; the username sets the access level.'
-              : 'Your role cannot create accounts. Grant it <strong>Manage users</strong> under Role permissions, then come back.'
+              : 'Your level cannot create accounts. Grant it <strong>Manage users</strong> under Role permissions, then come back.'
           }
         </p>
         <form class="create-form" id="create-profile-form">
@@ -1500,12 +1547,18 @@
           <div class="field">
             <label for="cp-division">Division</label>
             <select id="cp-division" ${canManage ? '' : 'disabled'}>
-              <option value="mf">Residential / Multifamily</option>
-              <option value="retail">Office / Retail</option>
+              ${(data.divisions || [])
+                .map(
+                  (d) =>
+                    `<option value="${esc(d.key)}" ${
+                      d.key === state.settingsDivision ? 'selected' : ''
+                    }>${esc(d.label)}</option>`
+                )
+                .join('')}
             </select>
           </div>
           <div class="field">
-            <label for="cp-role">Role</label>
+            <label for="cp-role">Level</label>
             <select id="cp-role" ${canManage ? '' : 'disabled'}>${roleOptions}</select>
           </div>
           <div class="field field-wide">
@@ -1650,25 +1703,29 @@
 
   function renderPermissions() {
     const data = state.permissions;
-    const mine = state.profile ? state.profile.role : '';
+    // "You" only means something in your own division: the same level elsewhere
+    // is somebody else.
+    const mine =
+      state.profile && state.profile.division_key === data.division_key ? state.profile.role : '';
     const changed = data.roles.filter((r) => !r.is_default).length;
 
     qs('#permissions-body').innerHTML = `
       <p class="notice notice-info">
         Prototype build — any signed-in account can change these, so you are never locked out of
-        your own system. In production this section belongs behind <strong>Assign roles</strong>.
+        your own system. In production this section belongs behind
+        <strong>Assign roles and permissions</strong>.
       </p>
 
       <section class="panel">
         <div class="panel-head">
           <div class="panel-head-title">
-            <h2>Role permissions</h2>
+            <h2>${esc(data.division_label || '')} — what each level may do</h2>
             ${
               changed
-                ? `<span class="pill pill-warn">${changed} role${
+                ? `<span class="pill pill-warn">${changed} level${
                     changed === 1 ? '' : 's'
                   } changed from default</span>`
-                : '<span class="pill pill-quiet">All roles at shipped defaults</span>'
+                : '<span class="pill pill-quiet">All levels at shipped defaults</span>'
             }
           </div>
           <div class="panel-head-actions">
@@ -1677,16 +1734,18 @@
           </div>
         </div>
         <p class="panel-hint">
-          Tick a box to grant that role the capability — this is what a profile's role means, so it
-          decides what every account holding it may do. Your own role is highlighted: granting it
-          <strong>Edit workflow definitions</strong> is what un-greys the Edit control on a use case,
-          and <strong>Manage users</strong> is what lets you create profiles.
+          Tick a box to grant that level the capability <em>in this division only</em> — Construction
+          can run its levels differently from Residential. Your own level is highlighted where it is
+          your division: granting it <strong>Edit workflow definitions</strong> is what un-greys the
+          Edit control on a use case, <strong>Manage users</strong> is what lets you create profiles,
+          and <strong>See everyone's activity</strong> is the difference between overseeing a team and
+          seeing only your own runs.
         </p>
         <div class="table-scroll">
           <table class="data-table perm-matrix">
             <thead>
               <tr>
-                <th class="pm-role">Role</th>
+                <th class="pm-role">Level</th>
                 ${data.permissions.map((p) => `<th><span>${esc(p.label)}</span></th>`).join('')}
               </tr>
             </thead>
@@ -1752,11 +1811,20 @@
       for (const edit of edits) {
         state.permissions = await api(
           `/permissions/${encodeURIComponent(edit.role)}`,
-          jsonBody({ permissions: edit.permissions, updated_by: state.profile.name }, 'PUT')
+          jsonBody(
+            {
+              division: state.settingsDivision,
+              permissions: edit.permissions,
+              updated_by: state.profile.name,
+            },
+            'PUT'
+          )
         );
       }
       await afterPermissionChange(
-        `Updated ${edits.length} role${edits.length === 1 ? '' : 's'}.`
+        `Updated ${edits.length} level${edits.length === 1 ? '' : 's'} in ${
+          divisionLabels[state.settingsDivision] || 'this division'
+        }.`
       );
     } catch (err) {
       toast(err.message, 'error');
@@ -1766,8 +1834,13 @@
 
   async function restoreDefaultPermissions() {
     try {
-      state.permissions = await api('/permissions/reset', jsonBody({ updated_by: state.profile.name }));
-      await afterPermissionChange('Every role is back to its shipped permissions.');
+      state.permissions = await api(
+        '/permissions/reset',
+        jsonBody({ division: state.settingsDivision, updated_by: state.profile.name })
+      );
+      await afterPermissionChange(
+        `${divisionLabels[state.settingsDivision] || 'This division'} is back to its shipped permissions.`
+      );
     } catch (err) {
       toast(err.message, 'error');
     }

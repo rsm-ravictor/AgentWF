@@ -6,23 +6,37 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Division(str, Enum):
+    """A business line. Everything in the system is scoped to one of these.
+
+    Roles are held *per division*: Residential's super admin and Construction's
+    super admin are different people with the same title and no reach into each
+    other's work.
+    """
+
     MULTIFAMILY = "Multifamily/Residential"
     OFFICE = "Office/Retail"
+    CONSTRUCTION = "Construction"
+
 
 class Role(str, Enum):
-    SUPER_USER = "super_user"
+    """The three levels of access, from most to least.
+
+    Deliberately three rather than a longer ladder of job titles: the level
+    answers one question — how far does this account see — and the division
+    answers where. A job title that needs different capabilities is a permission
+    change on its level, not a new role.
+    """
+
+    SUPER_ADMIN = "super_admin"
     ADMIN = "admin"
-    DIVISION_HEAD = "division_head"
-    SUBGROUP_OWNER = "subgroup_owner"
-    REVIEWER = "reviewer"
-    AGENT = "agent"
+    GENERAL = "general"
 
 
 class Permission(str, Enum):
     """Individual capabilities a role grants.
 
-    Kept separate from Role so the Admin page can show *what* a role actually
-    lets someone do, rather than an opaque label.
+    Kept separate from Role so the Settings page can show *what* a level in a
+    division actually lets someone do, rather than an opaque label.
     """
 
     VIEW_DASHBOARD = "view_dashboard"
@@ -34,6 +48,11 @@ class Permission(str, Enum):
     DELETE_RECORDS = "delete_records"
     MANAGE_USERS = "manage_users"
     MANAGE_ROLES = "manage_roles"
+    # Whose work you can see. Without this an account sees only what it did
+    # itself — the difference between a general user and someone overseeing them.
+    VIEW_TEAM_ACTIVITY = "view_team_activity"
+    # Reach beyond your own division. Off for everyone by default, including
+    # super admins: a super admin runs one business line, not all of them.
     VIEW_ALL_DIVISIONS = "view_all_divisions"
 
 
@@ -46,50 +65,49 @@ PERMISSION_LABELS = {
     Permission.EDIT_WORKFLOW: "Edit workflow definitions",
     Permission.DELETE_RECORDS: "Delete records and reports",
     Permission.MANAGE_USERS: "Manage users",
-    Permission.MANAGE_ROLES: "Assign roles",
+    Permission.MANAGE_ROLES: "Assign roles and permissions",
+    Permission.VIEW_TEAM_ACTIVITY: "See everyone's activity",
     Permission.VIEW_ALL_DIVISIONS: "See every division",
 }
 
-# Display order, least to most privileged overall. Note this is NOT a strict
-# superset ladder: Agent, Reviewer and Subgroup Owner are peers with different
-# duties — a Reviewer signs off but does not upload; an Agent uploads and runs
-# work but never signs off. Only the senior tier (Division Head → Admin → Super
-# User) genuinely accumulates. The Profile page therefore reports permissions
-# granted rather than implying each step strictly contains the one below it.
+# Least to most privileged. Unlike the job-title ladder this replaced, each level
+# here genuinely contains the one below it, so a rank reads as a rank.
 ROLE_ORDER = [
-    Role.AGENT,
-    Role.REVIEWER,
-    Role.SUBGROUP_OWNER,
-    Role.DIVISION_HEAD,
+    Role.GENERAL,
     Role.ADMIN,
-    Role.SUPER_USER,
+    Role.SUPER_ADMIN,
 ]
 
 ROLE_LABELS = {
-    Role.SUPER_USER: "Super user",
-    Role.ADMIN: "Administrator",
-    Role.DIVISION_HEAD: "Division head",
-    Role.SUBGROUP_OWNER: "Subgroup owner",
-    Role.REVIEWER: "Reviewer",
-    Role.AGENT: "Agent",
+    Role.SUPER_ADMIN: "Super admin",
+    Role.ADMIN: "Admin",
+    Role.GENERAL: "General",
 }
 
 ROLE_DESCRIPTIONS = {
-    Role.SUPER_USER: "Unrestricted. Manages roles and permissions across every division.",
-    Role.ADMIN: "Manages users and roles within their division, and can edit workflow definitions.",
-    Role.DIVISION_HEAD: "Full access to every workflow and folder in their division, including sign-off.",
-    Role.SUBGROUP_OWNER: "Access limited to assigned folders; can run workflows and upload, but not sign off.",
-    Role.REVIEWER: "Reads and approves what the agent queues; cannot upload or change definitions.",
-    Role.AGENT: "Runs workflows and uploads documents. Every outcome goes to a human for sign-off.",
+    Role.SUPER_ADMIN: (
+        "Oversees their whole division: every use case, every approval and record, "
+        "who has access and what each level may do."
+    ),
+    Role.ADMIN: (
+        "Oversees the general users in their division — their productivity and what they "
+        "queued — and can edit use cases and sign off."
+    ),
+    Role.GENERAL: (
+        "Runs use cases and uploads documents, and sees their own work only. "
+        "Every outcome goes to an admin for sign-off."
+    ),
 }
 
 _ALL_PERMISSIONS = list(Permission)
 
-# The senior tier does accumulate — each of these contains everything below it.
-SENIOR_TIER = [Role.DIVISION_HEAD, Role.ADMIN, Role.SUPER_USER]
+# Each of these contains everything below it.
+SENIOR_TIER = [Role.ADMIN, Role.SUPER_ADMIN]
 
 ROLE_PERMISSIONS = {
-    Role.SUPER_USER: _ALL_PERMISSIONS,
+    # Everything within their own division. Cross-division reach is deliberately
+    # not included: each division has its own super admin.
+    Role.SUPER_ADMIN: [p for p in _ALL_PERMISSIONS if p != Permission.VIEW_ALL_DIVISIONS],
     Role.ADMIN: [
         Permission.VIEW_DASHBOARD,
         Permission.VIEW_REPOSITORY,
@@ -99,29 +117,9 @@ ROLE_PERMISSIONS = {
         Permission.EDIT_WORKFLOW,
         Permission.DELETE_RECORDS,
         Permission.MANAGE_USERS,
-        Permission.MANAGE_ROLES,
+        Permission.VIEW_TEAM_ACTIVITY,
     ],
-    Role.DIVISION_HEAD: [
-        Permission.VIEW_DASHBOARD,
-        Permission.VIEW_REPOSITORY,
-        Permission.UPLOAD_DOCUMENTS,
-        Permission.RUN_WORKFLOW,
-        Permission.APPROVE_WORKFLOW,
-        Permission.EDIT_WORKFLOW,
-        Permission.DELETE_RECORDS,
-    ],
-    Role.SUBGROUP_OWNER: [
-        Permission.VIEW_DASHBOARD,
-        Permission.VIEW_REPOSITORY,
-        Permission.UPLOAD_DOCUMENTS,
-        Permission.RUN_WORKFLOW,
-    ],
-    Role.REVIEWER: [
-        Permission.VIEW_DASHBOARD,
-        Permission.VIEW_REPOSITORY,
-        Permission.APPROVE_WORKFLOW,
-    ],
-    Role.AGENT: [
+    Role.GENERAL: [
         Permission.VIEW_DASHBOARD,
         Permission.VIEW_REPOSITORY,
         Permission.UPLOAD_DOCUMENTS,
@@ -131,11 +129,17 @@ ROLE_PERMISSIONS = {
 
 
 def permissions_for(role: Role) -> list:
-    """Permissions a role carries, as plain strings."""
+    """Permissions a level carries by default, as plain strings.
+
+    The shipped default only. What a level grants *now* is per division and lives
+    in `permission_repo`, because Construction may run its levels differently from
+    Residential.
+    """
     return [p.value for p in ROLE_PERMISSIONS.get(role, [])]
 
 
 def has_permission(role: Role, permission: Permission) -> bool:
+    """Whether a level grants a permission by default. See `permission_repo`."""
     return permission in ROLE_PERMISSIONS.get(role, [])
 
 CORE_FOLDERS = [
@@ -148,10 +152,56 @@ CORE_FOLDERS = [
     "AAT Company Requirements/Documents",
 ]
 
+# Construction keeps the shared categories and adds its own. Folder sets are per
+# division precisely so a new business line does not have to pretend its
+# paperwork is the same as everyone else's.
+CONSTRUCTION_FOLDERS = CORE_FOLDERS + [
+    "Contractor Insurances",
+    "Permits and Approvals",
+    "Change Orders",
+    "Lien Waivers",
+    "Safety Reports",
+]
+
 DIVISION_FOLDER_MAPPING = {
     Division.MULTIFAMILY: CORE_FOLDERS,
     Division.OFFICE: CORE_FOLDERS,
+    Division.CONSTRUCTION: CONSTRUCTION_FOLDERS,
 }
+
+# Every folder name the system recognises, across every division.
+ALL_FOLDERS = list(dict.fromkeys(f for folders in DIVISION_FOLDER_MAPPING.values() for f in folders))
+
+
+def folders_for(division: Division) -> list:
+    """The folder categories one division works in."""
+    return list(DIVISION_FOLDER_MAPPING.get(division, CORE_FOLDERS))
+
+
+# The short key a division travels under in URLs and the UI. One mapping, so a
+# new business line is added in exactly one place.
+DIVISION_KEYS = {
+    "mf": Division.MULTIFAMILY,
+    "retail": Division.OFFICE,
+    "construction": Division.CONSTRUCTION,
+}
+
+DIVISION_LABELS = {
+    Division.MULTIFAMILY: "Residential / Multifamily",
+    Division.OFFICE: "Office / Retail",
+    Division.CONSTRUCTION: "Construction",
+}
+
+
+def division_key(division: Division) -> str:
+    for key, value in DIVISION_KEYS.items():
+        if value == division:
+            return key
+    return "mf"
+
+
+def resolve_division_key(key: str) -> Division:
+    return DIVISION_KEYS.get((key or "").strip().lower(), Division.MULTIFAMILY)
 
 REDACTION_PATTERNS = [
     r"\b\d{3}-\d{2}-\d{4}\b",  # SSN

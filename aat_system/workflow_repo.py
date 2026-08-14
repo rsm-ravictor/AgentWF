@@ -29,7 +29,7 @@ from typing import List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .config import Division
+from .config import Division, division_key as _division_key
 from .models import Document, Folder, WorkflowRecord, WorkflowRevision, WorkflowStep
 
 # Extensions that count as a "record file" a user would want to open rather than
@@ -1102,4 +1102,5 @@ def record_files(db: Session, workflow_id: str, division: Division) -> List[dict
 
 
 def division_key(division: Division) -> str:
-    return "retail" if division == Division.OFFICE else "mf"
+    """Kept as a re-export so callers here need not reach into config."""
+    return _division_key(division)

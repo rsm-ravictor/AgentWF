@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from aat_system import approval_repo, workflow_repo
-from aat_system.config import Division
+from aat_system.config import Division, Role
 from aat_system.models import Base, Document, Folder, User
 
 MF = Division.MULTIFAMILY
@@ -25,7 +25,7 @@ def db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'wf.db'}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
-    owner = User(email="o@aat.com", name="Owner", division=MF, role="AGENT", hashed_password="x")
+    owner = User(email="o@aat.com", name="Owner", division=MF, role=Role.GENERAL, hashed_password="x")
     session.add(owner)
     session.commit()
     session.owner_id = owner.id

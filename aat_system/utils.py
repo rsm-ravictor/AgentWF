@@ -1,7 +1,7 @@
 import re
 import unicodedata
 from pathlib import Path
-from .config import CORE_FOLDERS, UPLOAD_ROOT, REDACTED_ROOT, ARCHIVE_ROOT
+from .config import ALL_FOLDERS, UPLOAD_ROOT, REDACTED_ROOT, ARCHIVE_ROOT
 
 INVALID_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._ \-]")
 
@@ -15,8 +15,13 @@ def normalize_filename(filename: str) -> str:
 
 
 def validate_folder_name(folder_name: str) -> str:
+    """Accept any folder category the system knows, in any division.
+
+    Division scope is enforced where a user's access is checked; this only keeps
+    invented folder names out of the filesystem.
+    """
     candidate = folder_name.strip()
-    if candidate not in CORE_FOLDERS:
+    if candidate not in ALL_FOLDERS:
         raise ValueError(f"Invalid folder name: {folder_name}")
     return candidate
 

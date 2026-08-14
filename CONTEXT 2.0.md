@@ -9,8 +9,29 @@ The system runs locally and references documents stored on the local device (loc
 ## Business Divisions
 - **Multifamily/Residential**
 - **Office/Retail**
+- **Construction**
 
-Each division has a division head with full access to all workflows and folders within their division. Subgroup owners have limited, role-specific access to assigned folders and workflows.
+Each division is a self-contained business line with **its own super admin** — the title
+belongs to a division, not to the company, so Residential's super admin has no reach into
+Construction. Folder categories are per division too: Construction carries the shared
+categories plus Contractor Insurances, Permits and Approvals, Change Orders, Lien Waivers
+and Safety Reports.
+
+## Access levels
+Three levels, held **per division**, so an account is always a division *and* a level:
+
+| Level | Sees | Can |
+| --- | --- | --- |
+| **Super admin** | everything in their division — every use case, approval and record | run, approve, edit use cases, manage people, assign permissions |
+| **Admin** | their division, including every general user's activity | run, approve, edit use cases, manage people |
+| **General** | their own work only | run use cases and upload documents |
+
+Every level can run use cases — execution is the point of the system, not a privilege.
+What separates the levels is whose work they can see (`view_team_activity`), whether they
+can sign off, and whether they can change the system's definitions and access.
+
+No level reaches beyond its own division by default: `view_all_divisions` is off for
+everyone including super admins, and has to be granted deliberately.
 
 ## Core Requirements
 - Centralized repository that tracks all leases and flags expired leases.
@@ -121,16 +142,20 @@ use case. It holds:
 a profile's role is a name for a set of permissions, so creating a profile and defining
 what its role means belong on the same page. Two sections:
 
-- **Profiles** — create a profile (name, email, division, role, optional password) with a
-  live preview of exactly what the chosen role grants, above the roster of existing
-  profiles with their role, division and active state editable in place.
-- **Role permissions** — the role × permission matrix, editable in place, with the
-  signed-in account's own row highlighted and a restore-defaults action. Not
-  division-scoped; roles mean the same thing everywhere.
+A switcher at the top chooses which **division** is being administered, because both
+sections below it are per division.
 
-Settings is reachable by every role. Editing profiles needs `manage_users` and the create
+- **Profiles** — create a profile (name, email, division, level, optional password) with a
+  live preview of exactly what the chosen level grants in that division, above the roster
+  of existing profiles with their level, division and active state editable in place.
+- **Role permissions** — the level × permission matrix for the chosen division, editable in
+  place, with a restore-defaults action.
+
+Settings is reachable at every level. Editing profiles needs `manage_users` and the create
 form says so, but the permission that would grant it is a checkbox in the next section
-along — so a gate is something to open deliberately rather than a dead end.
+along — so a gate is something to open deliberately rather than a dead end. Administering
+another division's people needs `view_all_divisions`, which the server enforces on both
+creating and editing accounts.
 
 **Profile & access** (user menu) stays separate as the read-only personal page: what this
 account may do and where those limits come from.
@@ -143,9 +168,17 @@ the execution/outcome payload. The shell itself should be built once and reused 
 Vendor Insurance, Renter's Insurance, Lease/Addenda Checklist, Notices of Breach, DAR/
 Security Report, and any future use cases (including Office/Retail's Phase 2 set).
 
-## Office/Retail Phase 2
+## Office/Retail and Construction
 - Mirror Phase 1 with the same core structure and automation patterns.
-- Adapt folder mappings, document sources, and division-specific requirements for Office/Retail.
+- Adapt folder mappings, document sources, and division-specific requirements per division.
+- Adding a business line is one entry in `Division`, one folder list in
+  `DIVISION_FOLDER_MAPPING`, and one short key in `DIVISION_KEYS`. Its levels, permission
+  matrix, folders, workflow definitions and revision history all come into being from
+  those; nothing else is per-division by hand.
+- The five Phase 1 use cases exist in every division, since definitions are seeded per
+  division from the same shipped steps and then owned locally. Construction's use cases are
+  therefore Residential's until someone edits them — the paperwork it needs
+  (permits, change orders, lien waivers) has folders but no use cases of its own yet.
 
 ## Implementation Notes
 - **FastAPI** — the backend web framework; serves the API endpoints (e.g.
@@ -251,29 +284,31 @@ exists** and runs on the shared shell like every other one; only the highlight-e
 implementation behind it is gone. When the new approach is defined it becomes a step
 definition plus a rubric, not a new page.
 
-### Roles and permissions — `config.py` for the defaults, `permission_repo.py` for the live grants
-Six roles (`Role`) and ten discrete capabilities (`Permission`), so the Profile,
-Administration and Permissions screens can report *what* a role actually lets someone do
-rather than showing an opaque label. The ladder is not a strict superset: Agent, Reviewer
-and Subgroup Owner are peers with different duties — a Reviewer signs off but cannot
-upload; an Agent uploads and runs work but never signs off. Only the senior tier
-(Division Head → Admin → Super User) genuinely accumulates.
+### Levels and permissions — `config.py` for the defaults, `permission_repo.py` for the live grants
+Three levels (`Role`) and eleven discrete capabilities (`Permission`), so the Profile and
+Settings screens can report *what* a level actually lets someone do rather than showing an
+opaque label. Unlike the six job titles this replaced, the levels are a true ladder:
+General ⊂ Admin ⊂ Super admin, so a promotion never quietly takes access away.
 
-**Roles are code; what a role grants is data.** `config.ROLE_PERMISSIONS` is the shipped
-default — the answer on a fresh database and what "Restore defaults" returns to.
-`role_permission_sets` holds the live configuration the Permissions page writes, and every
-gate resolves through `permission_repo.granted_for()`, so changing a grant changes what
-the system permits rather than only what a screen offers. The whole grant list is one row
-per role, not a row per grant, so "this role has been configured and holds nothing" is
-representable — with a row per grant it would be indistinguishable from "never
-configured", and the defaults would silently come back.
+**Levels are code; what a level grants is data, per division.** `config.ROLE_PERMISSIONS`
+is the shipped default — the answer on a fresh database and what "Restore defaults" returns
+to. `role_permission_sets` is keyed by **(division, level)** and holds the live
+configuration Settings writes, and every gate resolves through
+`permission_repo.granted_for()`, so changing a grant changes what the system permits rather
+than only what a screen offers. Keying by division is the point: Construction can let its
+general users edit use cases without that touching Residential's.
 
-The matrix lives in **Settings → Role permissions**: checkboxes per role, the signed-in
-account's own row highlighted, a marker on any role that differs from its shipped default,
-and a restore-defaults action. Saving re-resolves the current session, so a permission
-granted to your own role takes effect on the screens you are already looking at — the
-Edit control on a use case un-greys, and the create-profile form unlocks, without a
-re-login.
+The whole grant list is one row per pair, not a row per grant, so "this level has been
+configured and holds nothing" is representable — with a row per grant it would be
+indistinguishable from "never configured", and the defaults would silently come back.
+
+The matrix lives in **Settings → Role permissions**, under a switcher for which division is
+being administered: checkboxes per level, the signed-in account's own row highlighted when
+it is their own division, a marker on any level that differs from its shipped default, and
+a restore-defaults action scoped to that division. Saving re-resolves the current session,
+so a permission granted to your own level takes effect on the screens you are already
+looking at — the Edit control on a use case un-greys, and the create-profile form unlocks,
+without a re-login.
 
 ### Redaction before ingestion — `aat_system/redaction.py`
 A document is redacted on its way into the repository, not after. `document_repo`
@@ -289,12 +324,14 @@ tagged `source='sample'`, so a fresh install is not an empty screen. Samples are
 as samples in the UI and clearable from the dashboard, so a demo queue is never mistaken
 for real work.
 
-`DEFAULT_ROSTER` is 14 accounts, password `prototype`: seven named accounts covering every
-role, and seven **test accounts** — `test.super@`, `test.admin@`, `test.head@`,
-`test.owner@`, `test.reviewer@`, `test.agent@` and `test.retail@` (Office/Retail) — one per
-role, so any level of access can be tried without editing the roster or borrowing a real
-person's account. They are marked `is_test`, named "Test …", and folded into their own
-group on the login screen so they are never mistaken for real staff.
+`DEFAULT_ROSTER` is 18 accounts, password `prototype`: for each of the three divisions, a
+named account at each level — `super.residential@` / `admin.residential@` /
+`user.residential@`, and the same for `retail` and `construction` — plus a **test account**
+per level per division (`test.super.construction@` and so on). Any level of any division can
+be signed into without editing the roster or borrowing a real person's account. Test
+accounts are marked `is_test`, named "Test …", and folded into their own group on the login
+screen so they are never mistaken for real staff. The login screen lists only the accounts
+belonging to the division picked above it.
 
 ### API surface
 | Endpoint | Purpose |
@@ -315,9 +352,9 @@ group on the login screen so they are never mistaken for real staff.
 | `POST /token`, `POST /users`, `GET /users/me` | Auth and user management |
 | `POST /session/resolve`, `GET /roles`, `GET /admin/users`, `PATCH /admin/users/{id}` | Session role resolution and administration |
 | `POST /admin/users` | Create a profile (needs `manage_users`) |
-| `GET /permissions` | The role × permission matrix, live grants beside shipped defaults |
-| `PUT /permissions/{role}` | Replace what one role may do |
-| `POST /permissions/reset` | Put every role back to its shipped permissions |
+| `GET /permissions?division=` | One division's level × permission matrix, live grants beside shipped defaults |
+| `PUT /permissions/{role}` | Replace what one level may do in one division |
+| `POST /permissions/reset` | Put one division's levels back to their shipped permissions |
 | `GET /session/accounts` | The seeded accounts the login screen offers as a quick pick |
 | `POST /documents/upload` | Ingest into the repository |
 | `GET /leases/expired` | Lease expiration scan |
@@ -350,16 +387,17 @@ footer both say so up front, attaching a file returns 503 with an actionable mes
 a run with no attachment still works — it reports on what is already on file.
 
 ### Testing
-`python -m pytest tests/ -q` — 80 tests, no API key required and no model call made.
+`python -m pytest tests/ -q` — 81 tests, no API key required and no model call made.
 Coverage is on the definition seed/edit/reset cycle, revision history and rollback
 (including that a rollback is a new version and that the bad edit stays on the record),
 the required-document check, records and the approvals queue (`test_workflow_repo.py`),
 the run engine including that an edited definition changes what the run does
-(`test_workflow_runner.py`), and roles, folder scope, the roster including a test account
-per role, profile creation (email normalisation, duplicates, a default name and password),
-and runtime permission changes — that a granted permission reaches the profile
-the UI gates on, that a role stripped to nothing stays stripped, and that restoring
-defaults undoes everything (`test_access_control.py`).
+(`test_workflow_runner.py`), and the access model (`test_access_control.py`): that the three
+levels are a true ladder, that every level can run use cases, that no level crosses
+divisions by default, that a super admin is refused another division's work and folders,
+that granting Construction's general users a permission leaves Residential's alone, that a
+level stripped to nothing stays stripped, that resetting one division does not reset
+another, and that every division has its own account at every level.
 
 Sample documents in `sample_docs/`:
 
@@ -388,5 +426,10 @@ Sample documents in `sample_docs/`:
 - An existing `aat_system.db` keeps the now-unused `dar_reports`, `dar_incidents` and
   `workflow_sops` tables — `create_all` does not drop tables. Delete the file for a clean
   schema; nothing reads them.
+- **A database written before the three-level model cannot be read by it.** Roles are
+  stored as an enum, and the old names (`super_user`, `division_head`, `subgroup_owner`,
+  `reviewer`, `agent`) are no longer defined, so those rows raise on load. There is no
+  migration: delete `aat_system.db` and let startup reseed. The same applies to
+  `role_permission_sets`, which gained a division column.
 - Uploading into the repository still requires a token, so in practice documents are seeded
   outside the UI. The dashboard folder view reads them correctly once they are there.

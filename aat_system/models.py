@@ -117,23 +117,32 @@ class WorkflowStep(Base):
 
 
 class RolePermissionSet(Base):
-    """What one role is allowed to do, as configured at runtime.
+    """What one level is allowed to do **in one division**, configured at runtime.
 
-    `config.ROLE_PERMISSIONS` is the shipped default; a row here is what the
-    Permissions page wrote when someone changed a role. The whole grant list is
-    one row rather than a row per grant, so "this role has been configured and
-    holds nothing" is representable — with a row per grant it would be
-    indistinguishable from "never configured", and the defaults would silently
-    come back.
+    Keyed by division as well as role because the levels are per business line:
+    Residential's super admin and Construction's super admin are different people
+    with the same title, and Construction may decide its general users upload
+    where Residential's do not.
+
+    `config.ROLE_PERMISSIONS` is the shipped default; a row here is what Settings
+    wrote when someone changed a level. The whole grant list is one row rather
+    than a row per grant, so "this level has been configured and holds nothing" is
+    representable — with a row per grant it would be indistinguishable from "never
+    configured", and the defaults would silently come back.
     """
 
     __tablename__ = "role_permission_sets"
 
     id = Column(Integer, primary_key=True, index=True)
-    role = Column(Enum(Role), nullable=False, unique=True, index=True)
+    division = Column(Enum(Division), nullable=False, index=True)
+    role = Column(Enum(Role), nullable=False, index=True)
     permissions = Column(Text, nullable=False, default="[]")  # JSON list of permission keys
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("division", "role", name="uq_permission_set_division_role"),
+    )
 
 
 class WorkflowRevision(Base):

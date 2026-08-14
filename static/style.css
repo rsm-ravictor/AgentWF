@@ -192,7 +192,12 @@ textarea { resize: vertical; font-family: inherit; }
 }
 .logo-mark.small { width: 26px; height: 26px; border-radius: 8px; font-size: 14px; }
 
-.division-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 22px; }
+/* One column per business line — three of them, so the tiles get narrower
+   rather than the card getting wider. */
+.division-picker {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 22px;
+}
+.division-picker .d-title { font-size: 12.5px; }
 .division-option {
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   padding: 14px; border-radius: var(--radius-sm); cursor: pointer; font: inherit;
@@ -758,6 +763,22 @@ textarea { resize: vertical; font-family: inherit; }
 #view-settings .panel + .panel, #view-profile .panel + .panel { margin-top: 16px; }
 
 /* ---- Settings: profiles and role permissions in one place ---- */
+
+/* Which division is being administered. Above the section tabs because it scopes
+   both of them: a level only means something inside one division. */
+.settings-divisions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.sd-tab {
+  font: inherit; font-size: 13px; font-weight: 550; cursor: pointer;
+  background: var(--bg-raised); border: 1px solid var(--border); color: var(--text-soft);
+  border-radius: 999px; padding: 7px 15px;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.sd-tab:hover { border-color: var(--accent); color: var(--text); }
+.sd-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sd-mine {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  opacity: .75;
+}
 
 .settings-nav {
   display: flex; gap: 4px; margin-bottom: 18px;
