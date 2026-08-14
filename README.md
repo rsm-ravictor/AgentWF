@@ -17,8 +17,8 @@ Four screens, in the order a user meets them:
    case. Every tile is the same shape whatever the use case does.
 3. **Use case detail** — a persistent top bar to jump between use cases, then a
    fixed layout: the workflow diagram on the left (2/3, with an enlarge overlay),
-   the written walkthrough on the right (1/3, editable), and a run footer with a
-   live status bar and the outcome.
+   the written walkthrough on the right (1/3, editable — the diagram redraws from
+   your edits as you type), and a run footer with a live status bar and the outcome.
 4. **Reference** — a rollup of every use case in the division, and the shared
    vocabulary their narratives are written against.
 

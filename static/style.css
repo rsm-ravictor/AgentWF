@@ -167,6 +167,7 @@ textarea { resize: vertical; font-family: inherit; }
   gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
 }
 .panel-head h2 { font-size: 15px; }
+.panel-head-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .panel-head-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .panel-hint { font-size: 12.5px; color: var(--text-faint); margin-bottom: 14px; }
 .ws-count { font-size: 12.5px; color: var(--text-faint); }
@@ -449,6 +450,13 @@ textarea { resize: vertical; font-family: inherit; }
 .kind-human { --kind-color: var(--k-human); }
 .kind-record { --kind-color: var(--k-record); }
 .kind-note { --kind-color: var(--k-note); }
+
+/* Being edited: the diagram is showing a draft, not what a run would execute.
+   Marked so an unsaved picture is never mistaken for the saved workflow. */
+.diagram.is-draft .node { border-style: dashed; background: var(--bg-sunken); }
+.diagram.is-draft .connector, .diagram.is-draft .connector::after { opacity: .55; }
+.node-untitled { color: var(--text-faint); font-weight: 500; font-style: italic; }
+.pill-draft { background: var(--warn-soft); color: var(--warn); }
 
 .diagram-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .legend-item {

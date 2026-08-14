@@ -90,10 +90,11 @@ Clicking a use case tile (or a name in the top bar) opens a detail page with thi
   - **Right (1/3) — Narrative:** a written walkthrough of the use case. Section headers
     in the narrative correspond 1:1 with the nodes/steps shown in the left-side diagram,
     with small bullets under each header describing what's happening at that step.
-    Includes an **Edit** control: editing here can add/update steps, and edits should
-    propagate to (a) the visual diagram on the left and (b) the underlying workflow
-    definition itself, so the diagram, narrative, and actual execution logic stay in
-    sync rather than drifting into three separate sources of truth.
+    Includes an **Edit** control: editing here can add/update/reorder/remove steps, and
+    edits propagate to (a) the visual diagram on the left — live, as they are typed,
+    before anything is saved — and (b) the underlying workflow definition itself on save,
+    so the diagram, narrative, and actual execution logic stay in sync rather than
+    drifting into three separate sources of truth.
 - **Footer — Execution control:** a "Start Process" action that kicks off a live run.
   While running, a status bar tracks progress through the workflow's steps in real
   time. On completion, the page shows the final outcome/result of that run.
@@ -151,6 +152,18 @@ walkthrough, and the track the run walks are three renderings of those same
 rows — editing the narrative rewrites them, so the three cannot drift apart.
 Steps are seeded from `DEFAULT_STEPS` on first read, then owned by whoever edits
 them; changing a workflow needs no deploy. Definitions are per division.
+
+Editing is live: while the walkthrough is open for editing, the diagram redraws
+from the draft on every keystroke — renaming a step renames its node, changing a
+step's type recolours it, and adding, reordering or removing a step does the same
+to the diagram, all before anything is saved. The draft diagram is drawn dashed
+and badged **Unsaved edits**, because it is not yet what a run would execute; a
+run is refused while edits are open rather than reporting progress against steps
+that do not exist yet. Save commits the draft through
+`PUT /workflows/{id}/definition`, at which point the diagram, the walkthrough and
+the run are the same thing again. Cancel drops it and the saved diagram returns.
+The **Edit** control is visible to every role but disabled for those without
+`edit_workflow`, so the capability reads as withheld rather than absent.
 
 Each step carries a `kind`, which both colours its node and decides what the
 runner does there: `intake` (check required documents against the repository),

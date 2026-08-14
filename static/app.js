@@ -561,17 +561,20 @@
 
   // ---- The diagram: one node per step, coloured by kind ----
 
-  function diagramHtml(steps) {
+  function diagramHtml(steps, isDraft) {
     return steps
       .map((step, index) => {
-        const status = state.runStatuses[step.key] || '';
+        // A draft step has no key yet — it has not been saved — so it carries no
+        // run status either. Nothing to look up until it exists server-side.
+        const status = (!isDraft && state.runStatuses[step.key]) || '';
         return `
-        <div class="node kind-${esc(step.kind)} ${status}" data-key="${esc(step.key)}" title="${esc(step.summary)}">
+        <div class="node kind-${esc(step.kind)} ${status}" data-key="${esc(step.key || 'draft-' + index)}" title="${esc(step.summary)}">
           <div class="node-top">
             <span class="node-index">${index + 1}</span>
             <span class="node-kind">${esc(KINDS[step.kind] || 'Step')}</span>
           </div>
-          <div class="node-title">${esc(step.title)}</div>
+          <div class="node-title">${esc((step.title || '').trim()) ||
+            '<span class="node-untitled">Untitled step</span>'}</div>
           <div class="node-status"></div>
         </div>`;
       })
@@ -588,23 +591,30 @@
       .join('');
   }
 
+  // While the narrative is being edited the diagram draws the draft, not the
+  // saved definition — the picture follows the words as they are typed rather
+  // than waiting for a save.
   function renderDiagram() {
-    const steps = state.workflow.steps;
-    qs('#uc-diagram').innerHTML = diagramHtml(steps);
+    const wf = state.workflow;
+    const isDraft = !!(wf.editing && wf.draft);
+    const steps = isDraft ? wf.draft : wf.steps;
+    qs('#uc-diagram').innerHTML = diagramHtml(steps, isDraft);
     qs('#uc-legend').innerHTML = legendHtml(steps);
+    qs('#uc-diagram').classList.toggle('is-draft', isDraft);
+    qs('#diagram-draft').classList.toggle('hidden', !isDraft);
     if (!qs('#diagram-overlay').classList.contains('hidden')) {
-      qs('#overlay-diagram').innerHTML = diagramHtml(steps);
+      qs('#overlay-diagram').innerHTML = diagramHtml(steps, isDraft);
       qs('#overlay-legend').innerHTML = legendHtml(steps);
+      qs('#overlay-diagram').classList.toggle('is-draft', isDraft);
     }
   }
 
   qs('#diagram-expand').addEventListener('click', () => {
     if (!state.workflow) return;
     qs('#overlay-title').textContent = state.workflow.detail.definition.title + ' — workflow';
-    qs('#overlay-diagram').innerHTML = diagramHtml(state.workflow.steps);
-    qs('#overlay-legend').innerHTML = legendHtml(state.workflow.steps);
     qs('#diagram-overlay').classList.remove('hidden');
     document.body.classList.add('no-scroll');
+    renderDiagram();
   });
 
   function closeOverlay() {
@@ -623,13 +633,21 @@
     const wf = state.workflow;
     const editable = can('edit_workflow');
 
-    qs('#narr-edit').classList.toggle('hidden', wf.editing || !editable);
+    // Shown to everyone, disabled for roles that cannot edit: hiding it makes
+    // the capability look absent rather than withheld.
+    const editBtn = qs('#narr-edit');
+    editBtn.classList.toggle('hidden', wf.editing);
+    editBtn.disabled = !editable;
+    editBtn.title = editable
+      ? 'Edit the steps — the diagram follows as you type'
+      : 'Your role cannot edit workflow definitions';
+
     qs('#narr-save').classList.toggle('hidden', !wf.editing);
     qs('#narr-cancel').classList.toggle('hidden', !wf.editing);
     qs('#narr-reset').classList.toggle('hidden', !wf.editing);
     qs('#narr-add').classList.toggle('hidden', !wf.editing);
     qs('#narr-hint').textContent = wf.editing
-      ? 'Saving rewrites the workflow: the diagram, this walkthrough, and what the run executes.'
+      ? 'The diagram follows your edits as you type. Saving makes it the workflow: this walkthrough, the diagram, and what the run executes.'
       : editable
       ? 'Each section is a step in the diagram. Editing here rewrites the workflow itself.'
       : 'Each section is a step in the diagram. Your role cannot edit the definition.';
@@ -694,13 +712,26 @@
     }));
   }
 
+  // Push what is in the editor into the draft and redraw the diagram from it.
+  // Only the diagram is redrawn — re-rendering the narrative mid-keystroke would
+  // take the caret out of the field being typed in.
+  function previewDraft() {
+    state.workflow.draft = readDraftFromDom();
+    renderDiagram();
+  }
+
   function bindNarrativeEditors() {
+    qsa('#uc-narrative .ne-title, #uc-narrative .ne-summary, #uc-narrative .ne-bullets').forEach((field) =>
+      field.addEventListener('input', previewDraft)
+    );
+
     // The colour strip follows the type as soon as it is changed, so the edit
-    // panel shows the same coding the diagram will.
+    // panel shows the same coding the diagram just took on.
     qsa('#uc-narrative .ne-kind').forEach((select) =>
       select.addEventListener('change', () => {
         const article = select.closest('.narr-step');
         article.className = 'narr-step narr-edit kind-' + select.value;
+        previewDraft();
       })
     );
 
@@ -712,7 +743,7 @@
         if (to < 0 || to >= draft.length) return;
         [draft[index], draft[to]] = [draft[to], draft[index]];
         state.workflow.draft = draft;
-        renderNarrative();
+        renderEditor();
       })
     );
 
@@ -723,9 +754,16 @@
         if (draft.length === 1) return toast('A workflow needs at least one step.', 'error');
         draft.splice(index, 1);
         state.workflow.draft = draft;
-        renderNarrative();
+        renderEditor();
       })
     );
+  }
+
+  // Structural changes — reorder, remove, add, enter or leave edit mode — move
+  // both panels at once, so the two never describe different workflows.
+  function renderEditor() {
+    renderNarrative();
+    renderDiagram();
   }
 
   qs('#narr-edit').addEventListener('click', () => {
@@ -738,20 +776,26 @@
       summary: s.summary,
       bullets: s.bullets.slice(),
     }));
-    renderNarrative();
+    renderEditor();
   });
 
   qs('#narr-cancel').addEventListener('click', () => {
     state.workflow.editing = false;
     state.workflow.draft = null;
-    renderNarrative();
+    renderEditor();
   });
 
   qs('#narr-add').addEventListener('click', () => {
     const draft = readDraftFromDom();
     draft.push({ key: null, title: 'New step', kind: 'note', summary: '', bullets: [] });
     state.workflow.draft = draft;
-    renderNarrative();
+    renderEditor();
+    // Land in the step that was just added rather than making the user scroll.
+    const added = qsa('#uc-narrative .narr-edit').pop();
+    if (added) {
+      added.scrollIntoView({ block: 'nearest' });
+      qs('.ne-title', added).select();
+    }
   });
 
   qs('#narr-save').addEventListener('click', async () => {
@@ -916,6 +960,11 @@
   async function startRun() {
     if (state.running || !state.workflow) return;
     if (!can('run_workflow')) return toast('Your role cannot start a run.', 'error');
+    // A run executes the saved definition. Starting one while the diagram is
+    // showing unsaved edits would report progress against steps that do not
+    // exist yet.
+    if (state.workflow.editing)
+      return toast('Save or cancel your edits first — the diagram is showing unsaved changes.', 'error');
 
     const steps = state.workflow.steps;
     state.running = true;
