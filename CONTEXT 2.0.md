@@ -116,13 +116,14 @@ use case. It holds:
   standard phrasing used across use case narratives, so terms stay consistent instead of
   being redefined slightly differently inside each use case's narrative panel.
 
-### 5. Account screens
-Reached from the user menu in the header rather than the main navigation, because they
-belong to the account rather than to a division's work:
-- **Profile & access** — what the signed-in account is allowed to do and where those
-  limits come from (role, the permissions it grants, division scope).
-- **Administration** — the roster: who has access, what role they hold, and what that
-  role grants. Only shown to accounts that can manage users.
+### 5. Account and access screens
+- **Permissions** — a main-nav page holding the role × permission matrix: what each role
+  may do, editable in place, with the signed-in account's row highlighted and a
+  restore-defaults action. Not division-scoped; roles mean the same thing everywhere.
+- **Profile & access** (user menu) — what the signed-in account is allowed to do and where
+  those limits come from (role, the permissions it grants, division scope).
+- **Administration** (user menu) — the roster: who has access, what role they hold, and
+  what that role grants. Only shown to accounts that can manage users.
 
 ### Design implication
 Because every use case shares this same page shell (header, 2/3 diagram + 1/3 narrative,
@@ -240,13 +241,28 @@ exists** and runs on the shared shell like every other one; only the highlight-e
 implementation behind it is gone. When the new approach is defined it becomes a step
 definition plus a rubric, not a new page.
 
-### Roles and permissions — `aat_system/config.py`
-Six roles (`Role`) and ten discrete capabilities (`Permission`) with an explicit
-`ROLE_PERMISSIONS` map, so the Profile and Administration screens can report *what* a
-role actually lets someone do rather than showing an opaque label. The ladder is not a
-strict superset: Agent, Reviewer and Subgroup Owner are peers with different duties — a
-Reviewer signs off but cannot upload; an Agent uploads and runs work but never signs
-off. Only the senior tier (Division Head → Admin → Super User) genuinely accumulates.
+### Roles and permissions — `config.py` for the defaults, `permission_repo.py` for the live grants
+Six roles (`Role`) and ten discrete capabilities (`Permission`), so the Profile,
+Administration and Permissions screens can report *what* a role actually lets someone do
+rather than showing an opaque label. The ladder is not a strict superset: Agent, Reviewer
+and Subgroup Owner are peers with different duties — a Reviewer signs off but cannot
+upload; an Agent uploads and runs work but never signs off. Only the senior tier
+(Division Head → Admin → Super User) genuinely accumulates.
+
+**Roles are code; what a role grants is data.** `config.ROLE_PERMISSIONS` is the shipped
+default — the answer on a fresh database and what "Restore defaults" returns to.
+`role_permission_sets` holds the live configuration the Permissions page writes, and every
+gate resolves through `permission_repo.granted_for()`, so changing a grant changes what
+the system permits rather than only what a screen offers. The whole grant list is one row
+per role, not a row per grant, so "this role has been configured and holds nothing" is
+representable — with a row per grant it would be indistinguishable from "never
+configured", and the defaults would silently come back.
+
+The **Permissions page** is a role × permission matrix of checkboxes, with the signed-in
+account's own row highlighted, a marker on any role that differs from its shipped default,
+and a restore-defaults action. Saving re-resolves the current session, so a permission
+granted to your own role takes effect on the screens you are already looking at — the
+Edit control on a use case un-greys without a re-login.
 
 ### Redaction before ingestion — `aat_system/redaction.py`
 A document is redacted on its way into the repository, not after. `document_repo`
@@ -256,11 +272,18 @@ routes every upload through `redact_uploaded_file` before archiving it, stamps
 page-level and coarse — extend `redaction.py` for content-level rules.
 
 ### Seeded on first run
-Startup creates the core folders for both divisions, seeds the roster
-(`DEFAULT_ROSTER` — one account per role, password `prototype`), and fills an empty
-approvals queue with illustrative cases tagged `source='sample'`, so a fresh install is
-not an empty screen. Samples are labelled as samples in the UI and clearable from the
-dashboard, so a demo queue is never mistaken for real work.
+Startup creates the core folders for both divisions, writes each role's shipped
+permissions, seeds the roster, and fills an empty approvals queue with illustrative cases
+tagged `source='sample'`, so a fresh install is not an empty screen. Samples are labelled
+as samples in the UI and clearable from the dashboard, so a demo queue is never mistaken
+for real work.
+
+`DEFAULT_ROSTER` is 14 accounts, password `prototype`: seven named accounts covering every
+role, and seven **test accounts** — `test.super@`, `test.admin@`, `test.head@`,
+`test.owner@`, `test.reviewer@`, `test.agent@` and `test.retail@` (Office/Retail) — one per
+role, so any level of access can be tried without editing the roster or borrowing a real
+person's account. They are marked `is_test`, named "Test …", and folded into their own
+group on the login screen so they are never mistaken for real staff.
 
 ### API surface
 | Endpoint | Purpose |
@@ -280,6 +303,9 @@ dashboard, so a demo queue is never mistaken for real work.
 | `GET /repository/documents`, `GET /repository/documents/{id}/download` | Folder contents and archived files |
 | `POST /token`, `POST /users`, `GET /users/me` | Auth and user management |
 | `POST /session/resolve`, `GET /roles`, `GET /admin/users`, `PATCH /admin/users/{id}` | Session role resolution and administration |
+| `GET /permissions` | The role × permission matrix, live grants beside shipped defaults |
+| `PUT /permissions/{role}` | Replace what one role may do |
+| `POST /permissions/reset` | Put every role back to its shipped permissions |
 | `GET /session/accounts` | The seeded accounts the login screen offers as a quick pick |
 | `POST /documents/upload` | Ingest into the repository |
 | `GET /leases/expired` | Lease expiration scan |
@@ -294,8 +320,8 @@ dashboard, so a demo queue is never mistaken for real work.
 ### Frontend
 Single-page app in `static/` (`index.html`, `app.js`, `style.css`) — no build step. It
 implements the screens described under "Frontend Redesign" above: login/division,
-division dashboard, use case detail and reference, plus the two account views (profile
-and administration) reached from the header's user menu. The use case shell is written
+division dashboard, use case detail, reference and permissions, plus the two account views
+(profile and administration) reached from the header's user menu. The use case shell is written
 once and reused for every use case; a new use case needs no new frontend code. Dark mode
 follows system preference and persists.
 
@@ -312,12 +338,15 @@ footer both say so up front, attaching a file returns 503 with an actionable mes
 a run with no attachment still works — it reports on what is already on file.
 
 ### Testing
-`python -m pytest tests/ -q` — 64 tests, no API key required and no model call made.
+`python -m pytest tests/ -q` — 75 tests, no API key required and no model call made.
 Coverage is on the definition seed/edit/reset cycle, revision history and rollback
 (including that a rollback is a new version and that the bad edit stays on the record),
 the required-document check, records and the approvals queue (`test_workflow_repo.py`),
 the run engine including that an edited definition changes what the run does
-(`test_workflow_runner.py`), and roles/permissions (`test_access_control.py`).
+(`test_workflow_runner.py`), and roles, folder scope, the roster including a test account
+per role, and runtime permission changes — that a granted permission reaches the profile
+the UI gates on, that a role stripped to nothing stays stripped, and that restoring
+defaults undoes everything (`test_access_control.py`).
 
 Sample documents in `sample_docs/`:
 
@@ -335,6 +364,11 @@ Sample documents in `sample_docs/`:
 - UI login is simulated: any password is accepted and no token is issued. The username is
   resolved server-side to a real account, so the *role* is real even though the session is
   not; the authenticated endpoints are not exercised by the frontend.
+- The Permissions page is deliberately unguarded in this build: any signed-in account can
+  change what any role grants, so nobody can lock themselves out of a prototype they are
+  still shaping. The page says so on itself. Before this leaves localhost, gate
+  `PUT /permissions/{role}` and `POST /permissions/reset` on `MANAGE_ROLES` — an account
+  that can widen its own permissions has, in effect, all of them.
 - The API endpoints and the frontend have no automated coverage; the backend logic does.
 - An existing `aat_system.db` keeps the now-unused `dar_reports`, `dar_incidents` and
   `workflow_sops` tables — `create_all` does not drop tables. Delete the file for a clean

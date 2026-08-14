@@ -9,7 +9,7 @@ structured. This file is the short version of how to run it.
 
 ## The shape of the app
 
-Four screens, in the order a user meets them:
+The screens, in the order a user meets them:
 
 1. **Login** — company name, then a division: Residential/Multifamily or Office/Retail.
    The division scopes every folder, use case and record from that point on.
@@ -22,6 +22,8 @@ Four screens, in the order a user meets them:
 4. **Reference** — a rollup of every use case in the division, the change log of
    workflow definitions (every version, what changed, and a roll-back action), and
    the shared vocabulary their narratives are written against.
+5. **Permissions** — the role × permission matrix, editable in place. Roles are
+   fixed in code; what a role grants is data, and every gate in the app reads it.
 
 The use case shell is built once and reused. What differs per use case is only
 its definition, so adding one takes no new frontend code.
@@ -60,6 +62,7 @@ does when it reaches it:
 - `aat_system/llm_analyzer.py` — per-workflow rubrics and the structured-output call to Claude.
 - `aat_system/approval_repo.py` — the human-in-the-loop queue.
 - `aat_system/user_repo.py`, `auth.py`, `security.py` — roster, role scope, tokens.
+- `aat_system/permission_repo.py` — what each role grants, editable at runtime by the Permissions page.
 - `aat_system/document_repo.py`, `redaction.py` — ingestion, redaction, lease scanning.
 - `aat_system/main.py` — the FastAPI app.
 - `static/` — the UI. No build step: `index.html`, `app.js`, `style.css`.
@@ -77,12 +80,17 @@ uvicorn aat_system.main:app --reload
 Open http://127.0.0.1:8000/. Any password works in this prototype; the
 **username sets the access level**, and the login screen lists the seeded
 accounts to sign in as one click each — `admin@aat.com` (super user),
-`head.mf@aat.com` (division head), `owner@aat.com`, `reviewer@aat.com`,
-`agent@aat.com`. Anything else is provisioned as an Agent.
+`sysadmin@aat.com` (administrator), `head.mf@aat.com` (division head),
+`owner@aat.com`, `reviewer@aat.com`, `agent@aat.com` — plus a **test account per
+role** under their own heading (`test.super@`, `test.admin@`, `test.head@`,
+`test.owner@`, `test.reviewer@`, `test.agent@`, `test.retail@`). Anything else is
+provisioned as an Agent.
 
-Editing a workflow definition needs `edit_workflow`, which only Division head,
-Administrator and Super user hold — sign in as one of those if the **Edit**
-button on a use case is disabled.
+Editing a workflow definition needs `edit_workflow`, which by default only
+Division head, Administrator and Super user hold. Two ways past a disabled
+**Edit** button: sign in as one of those, or open **Permissions** and grant the
+capability to the role you are using — that page writes what the app actually
+gates on, and your session picks the change up immediately.
 
 Without an API key the app still runs: a run with no attachment reports on what
 is already on file, and the UI says up front that grading is unavailable.

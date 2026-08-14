@@ -42,6 +42,7 @@
     openFolder: null,
     view: 'dashboard',
     changeLogFilter: '', // '' = every use case in the division
+    permissions: null, // the role × permission matrix, as loaded
   };
 
   const can = (permission) => !!(state.profile && state.profile.permissions.includes(permission));
@@ -171,22 +172,16 @@
     } catch (err) {
       return; // The typed-username path still works without the quick pick.
     }
-    qs('#login-accounts').innerHTML = accounts
-      .map(
-        (a) => `
-        <button type="button" class="la-item" data-email="${esc(a.email)}" data-division="${esc(
-          a.division_key
-        )}" title="${esc(a.role_description)}">
-          <span class="la-role">${esc(a.role_label)}<span class="la-div">${esc(
-            divisionLabels[a.division_key] || ''
-          )}</span></span>
-          <span class="la-email">${esc(a.name)} · ${esc(a.email)}</span>
-          <span class="la-grant ${a.can_edit_workflow ? 'can' : 'cannot'}">${
-            a.can_edit_workflow ? 'can edit workflows' : 'cannot edit workflows'
-          }</span>
-        </button>`
-      )
-      .join('');
+    const real = accounts.filter((a) => !a.is_test);
+    const test = accounts.filter((a) => a.is_test);
+    qs('#login-accounts').innerHTML =
+      real.map(loginAccountHtml).join('') +
+      (test.length
+        ? `<details class="la-test">
+            <summary>Test accounts — one per role (${test.length})</summary>
+            <div class="la-list">${test.map(loginAccountHtml).join('')}</div>
+          </details>`
+        : '');
 
     qsa('#login-accounts .la-item').forEach((btn) =>
       btn.addEventListener('click', () => {
@@ -195,6 +190,21 @@
         qs('#login-form').requestSubmit();
       })
     );
+  }
+
+  function loginAccountHtml(a) {
+    return `
+      <button type="button" class="la-item" data-email="${esc(a.email)}" data-division="${esc(
+      a.division_key
+    )}" title="${esc(a.role_description)}">
+        <span class="la-role">${esc(a.role_label)}<span class="la-div">${esc(
+      divisionLabels[a.division_key] || ''
+    )}</span></span>
+        <span class="la-email">${esc(a.name)} · ${esc(a.email)}</span>
+        <span class="la-grant ${a.can_edit_workflow ? 'can' : 'cannot'}">${
+      a.can_edit_workflow ? 'can edit workflows' : 'cannot edit workflows'
+    }</span>
+      </button>`;
   }
 
   qs('#login-form').addEventListener('submit', async (event) => {
@@ -272,6 +282,7 @@
     if (name === 'reference') loadReference();
     if (name === 'profile') renderProfile();
     if (name === 'admin') loadAdmin();
+    if (name === 'permissions') loadPermissions();
   }
 
   qsa('.nav-tab').forEach((tab) => tab.addEventListener('click', () => switchView(tab.dataset.target)));
@@ -1515,6 +1526,155 @@
       toast(err.message, 'error');
       loadAdmin();
     }
+  }
+
+  // ---------------- Permissions ----------------
+
+  async function loadPermissions() {
+    const body = qs('#permissions-body');
+    body.innerHTML = '<div class="loading">Loading permissions…</div>';
+    try {
+      state.permissions = await api('/permissions');
+    } catch (err) {
+      body.innerHTML = `<p class="empty">Could not load permissions: ${esc(err.message)}</p>`;
+      return;
+    }
+    renderPermissions();
+  }
+
+  function renderPermissions() {
+    const data = state.permissions;
+    const mine = state.profile ? state.profile.role : '';
+    const changed = data.roles.filter((r) => !r.is_default).length;
+
+    qs('#permissions-body').innerHTML = `
+      <p class="notice notice-info">
+        Prototype build — any signed-in account can change these, so you are never locked out of
+        your own system. In production this page belongs behind <strong>Assign roles</strong>.
+      </p>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-head-title">
+            <h2>Role permissions</h2>
+            ${
+              changed
+                ? `<span class="pill pill-warn">${changed} role${
+                    changed === 1 ? '' : 's'
+                  } changed from default</span>`
+                : '<span class="pill pill-quiet">All roles at shipped defaults</span>'
+            }
+          </div>
+          <div class="panel-head-actions">
+            <button class="btn btn-primary btn-sm" id="perm-save" disabled>Save changes</button>
+            <button class="btn btn-text btn-sm" id="perm-defaults">Restore defaults</button>
+          </div>
+        </div>
+        <p class="panel-hint">
+          Tick a box to grant that role the capability. Your own role is highlighted — granting
+          yourself <strong>Edit workflow definitions</strong> is what un-greys the Edit control on a
+          use case.
+        </p>
+        <div class="table-scroll">
+          <table class="data-table perm-matrix">
+            <thead>
+              <tr>
+                <th class="pm-role">Role</th>
+                ${data.permissions.map((p) => `<th><span>${esc(p.label)}</span></th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${data.roles.map((role) => permissionRowHtml(role, data.permissions, mine)).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>`;
+
+    qsa('#permissions-body .pm-box').forEach((box) =>
+      box.addEventListener('change', () => {
+        // Enable Save only once something actually differs from what is stored.
+        qs('#perm-save').disabled = !collectPermissionEdits().length;
+      })
+    );
+    qs('#perm-save').addEventListener('click', savePermissions);
+    qs('#perm-defaults').addEventListener('click', restoreDefaultPermissions);
+  }
+
+  function permissionRowHtml(role, permissions, mine) {
+    return `
+      <tr data-role="${esc(role.key)}" class="${role.key === mine ? 'pm-mine' : ''}">
+        <td class="pm-role">
+          <strong>${esc(role.label)}</strong>
+          ${role.key === mine ? '<span class="chip">You</span>' : ''}
+          ${role.is_default ? '' : '<span class="chip chip-quiet">changed</span>'}
+          <span class="pm-desc">${esc(role.description)}</span>
+        </td>
+        ${permissions
+          .map(
+            (perm) => `
+          <td class="pm-cell">
+            <input type="checkbox" class="pm-box" data-permission="${esc(perm.key)}"
+              ${role.granted.includes(perm.key) ? 'checked' : ''}
+              aria-label="${esc(role.label)} — ${esc(perm.label)}" />
+          </td>`
+          )
+          .join('')}
+      </tr>`;
+  }
+
+  // Roles whose ticked boxes no longer match what the server has stored.
+  function collectPermissionEdits() {
+    const stored = {};
+    state.permissions.roles.forEach((r) => (stored[r.key] = r.granted.slice().sort()));
+    return qsa('#permissions-body tr[data-role]')
+      .map((row) => ({
+        role: row.dataset.role,
+        permissions: qsa('.pm-box', row)
+          .filter((box) => box.checked)
+          .map((box) => box.dataset.permission),
+      }))
+      .filter((edit) => edit.permissions.slice().sort().join(',') !== (stored[edit.role] || []).join(','));
+  }
+
+  async function savePermissions() {
+    const edits = collectPermissionEdits();
+    if (!edits.length) return;
+    const button = qs('#perm-save');
+    button.disabled = true;
+    try {
+      for (const edit of edits) {
+        state.permissions = await api(
+          `/permissions/${encodeURIComponent(edit.role)}`,
+          jsonBody({ permissions: edit.permissions, updated_by: state.profile.name }, 'PUT')
+        );
+      }
+      await afterPermissionChange(
+        `Updated ${edits.length} role${edits.length === 1 ? '' : 's'}.`
+      );
+    } catch (err) {
+      toast(err.message, 'error');
+      loadPermissions();
+    }
+  }
+
+  async function restoreDefaultPermissions() {
+    try {
+      state.permissions = await api('/permissions/reset', jsonBody({ updated_by: state.profile.name }));
+      await afterPermissionChange('Every role is back to its shipped permissions.');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  // A permission change can change what the signed-in account may do, so the
+  // session has to be re-resolved: otherwise the page would say one thing and
+  // every button on every other screen would still be gated on the old answer.
+  async function afterPermissionChange(message) {
+    if (state.profile) await resolveProfile(state.profile.email, state.division);
+    renderIdentity();
+    renderPermissions();
+    if (state.workflow) renderNarrative();
+    toast(message, 'ok');
   }
 
   // ---------------- Boot ----------------

@@ -16,10 +16,17 @@ from .db import Base, engine, SessionLocal, get_db
 from .models import User, Folder, Document, Lease
 from .auth import assert_division_access, assert_folder_access, get_allowed_folders
 from .document_repo import ingest_document, scan_expired_leases, get_or_create_folder
-from .config import ARCHIVE_ROOT, Division, Permission, Role, CORE_FOLDERS, has_permission
+from .config import ARCHIVE_ROOT, Division, Permission, Role, CORE_FOLDERS
 from .security import authenticate_user, create_access_token, get_current_active_user, get_password_hash
 from .utils import ensure_storage_directories
-from . import llm_analyzer, approval_repo, user_repo, workflow_repo, workflow_runner
+from . import (
+    llm_analyzer,
+    approval_repo,
+    permission_repo,
+    user_repo,
+    workflow_repo,
+    workflow_runner,
+)
 
 MAX_RUN_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB — well under the API's 32 MB request cap
 
@@ -48,6 +55,11 @@ class StepPayload(BaseModel):
 class DefinitionUpdateRequest(BaseModel):
     division: str = "mf"
     steps: List[StepPayload] = []
+    updated_by: str = ""
+
+
+class RolePermissionsRequest(BaseModel):
+    permissions: List[str] = []
     updated_by: str = ""
 
 
@@ -113,6 +125,7 @@ def startup_event():
         for division in Division:
             for folder_name in CORE_FOLDERS:
                 get_or_create_folder(db, folder_name, division)
+        permission_repo.ensure_seeded(db)
         user_repo.seed_roster(db)
         # Illustrative cases so the queue is not empty on a fresh install. They
         # are tagged 'sample' in the UI and clearable from the dashboard.
@@ -598,7 +611,7 @@ def resolve_session(payload: SessionResolveRequest, db: Session = Depends(get_db
     user = user_repo.resolve_session_user(
         db, payload.email, resolve_division(payload.division), name=payload.name
     )
-    return {"profile": user_repo.profile(user)}
+    return {"profile": user_repo.profile(user, db)}
 
 
 @app.get("/session/accounts")
@@ -613,9 +626,9 @@ def session_accounts(db: Session = Depends(get_db)):
 
 
 @app.get("/roles")
-def list_roles():
+def list_roles(db: Session = Depends(get_db)):
     """Every role, its access level, and the permissions it grants."""
-    return {"roles": user_repo.role_catalog(), "permissions": user_repo.permission_catalog()}
+    return {"roles": user_repo.role_catalog(db), "permissions": user_repo.permission_catalog()}
 
 
 @app.get("/admin/users")
@@ -623,9 +636,44 @@ def admin_list_users(division: str = "", db: Session = Depends(get_db)):
     div = DIVISION_KEYS.get(division) if division else None
     return {
         "users": user_repo.list_users(db, division=div),
-        "roles": user_repo.role_catalog(),
+        "roles": user_repo.role_catalog(db),
         "permissions": user_repo.permission_catalog(),
     }
+
+
+# ---------------- Permissions: what each role may do ----------------
+
+@app.get("/permissions")
+def get_permissions(db: Session = Depends(get_db)):
+    """The role × permission matrix as currently configured.
+
+    `default` alongside `granted` on each role is what "Restore defaults" goes
+    back to, so the page can show where the live configuration has been changed.
+    """
+    return {
+        "roles": permission_repo.matrix(db),
+        "permissions": permission_repo.catalog(),
+    }
+
+
+@app.put("/permissions/{role}")
+def put_role_permissions(
+    role: Role, payload: RolePermissionsRequest, db: Session = Depends(get_db)
+):
+    """Replace what one role may do.
+
+    This changes what the system allows, not merely what the UI offers: every
+    gate resolves through the same configuration.
+    """
+    permission_repo.set_for(db, role, payload.permissions, updated_by=payload.updated_by)
+    return {"roles": permission_repo.matrix(db), "permissions": permission_repo.catalog()}
+
+
+@app.post("/permissions/reset")
+def reset_permissions(payload: RolePermissionsRequest, db: Session = Depends(get_db)):
+    """Put every role back to the permissions the system ships with."""
+    permission_repo.reset(db, updated_by=payload.updated_by)
+    return {"roles": permission_repo.matrix(db), "permissions": permission_repo.catalog()}
 
 
 @app.patch("/admin/users/{user_id}")
@@ -644,7 +692,7 @@ def admin_update_user(user_id: int, payload: UserUpdateRequest, db: Session = De
         raise HTTPException(status_code=403, detail="An acting administrator is required.")
 
     needed = Permission.MANAGE_ROLES if payload.role is not None else Permission.MANAGE_USERS
-    if not has_permission(actor.role, needed):
+    if not permission_repo.role_has(db, actor.role, needed):
         raise HTTPException(
             status_code=403,
             detail=f"Your role ({actor.role.value}) does not grant '{needed.value}'.",
@@ -669,7 +717,7 @@ def admin_update_user(user_id: int, payload: UserUpdateRequest, db: Session = De
 
     db.commit()
     db.refresh(target)
-    return {"user": user_repo.profile(target)}
+    return {"user": user_repo.profile(target, db)}
 
 
 if __name__ == "__main__":

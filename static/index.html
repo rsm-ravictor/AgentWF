@@ -92,6 +92,7 @@
           <nav class="nav-tabs" aria-label="Primary">
             <button class="nav-tab active" data-target="dashboard">Dashboard</button>
             <button class="nav-tab" data-target="reference">Reference</button>
+            <button class="nav-tab" data-target="permissions">Permissions</button>
           </nav>
         </div>
         <div class="app-nav-right">
@@ -385,6 +386,16 @@
           <p>Manage who has access, what role they hold, and what that role grants.</p>
         </div>
         <div id="admin-body"></div>
+      </main>
+
+      <!-- ============ PERMISSIONS ============ -->
+      <main class="app-main view hidden" id="view-permissions">
+        <div class="page-head">
+          <h1>Permissions</h1>
+          <p>What each role is allowed to do. These are the gates the whole app reads — a
+            change here changes what the system permits, not just what the screen offers.</p>
+        </div>
+        <div id="permissions-body"></div>
       </main>
     </div>
 

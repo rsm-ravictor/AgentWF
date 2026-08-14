@@ -20,19 +20,34 @@ from .config import (
     Role,
     permissions_for,
 )
+from . import permission_repo
 from .models import User
 from .security import get_password_hash
 
 # A starting roster so the Admin page has real rows to manage on a fresh
 # database. Passwords are placeholders — the preview UI does not issue tokens.
+# The last field marks a test account: same mechanics as any other account, but
+# named and grouped as an obvious place to try a role out.
 DEFAULT_ROSTER = [
-    ("admin@aat.com", "Avery Reyes", Division.MULTIFAMILY, Role.SUPER_USER),
-    ("head.mf@aat.com", "Jordan Blake", Division.MULTIFAMILY, Role.DIVISION_HEAD),
-    ("head.retail@aat.com", "Sam Ortega", Division.OFFICE, Role.DIVISION_HEAD),
-    ("owner@aat.com", "Priya Raman", Division.MULTIFAMILY, Role.SUBGROUP_OWNER),
-    ("reviewer@aat.com", "Chris Nolan", Division.MULTIFAMILY, Role.REVIEWER),
-    ("agent@aat.com", "Robin Diaz", Division.MULTIFAMILY, Role.AGENT),
+    ("admin@aat.com", "Avery Reyes", Division.MULTIFAMILY, Role.SUPER_USER, False),
+    ("sysadmin@aat.com", "Dana Whitfield", Division.MULTIFAMILY, Role.ADMIN, False),
+    ("head.mf@aat.com", "Jordan Blake", Division.MULTIFAMILY, Role.DIVISION_HEAD, False),
+    ("head.retail@aat.com", "Sam Ortega", Division.OFFICE, Role.DIVISION_HEAD, False),
+    ("owner@aat.com", "Priya Raman", Division.MULTIFAMILY, Role.SUBGROUP_OWNER, False),
+    ("reviewer@aat.com", "Chris Nolan", Division.MULTIFAMILY, Role.REVIEWER, False),
+    ("agent@aat.com", "Robin Diaz", Division.MULTIFAMILY, Role.AGENT, False),
+    # Test accounts — one per role, so any level of access can be tried without
+    # editing the roster or reaching for someone's real account.
+    ("test.super@aat.com", "Test Super User", Division.MULTIFAMILY, Role.SUPER_USER, True),
+    ("test.admin@aat.com", "Test Administrator", Division.MULTIFAMILY, Role.ADMIN, True),
+    ("test.head@aat.com", "Test Division Head", Division.MULTIFAMILY, Role.DIVISION_HEAD, True),
+    ("test.owner@aat.com", "Test Subgroup Owner", Division.MULTIFAMILY, Role.SUBGROUP_OWNER, True),
+    ("test.reviewer@aat.com", "Test Reviewer", Division.MULTIFAMILY, Role.REVIEWER, True),
+    ("test.agent@aat.com", "Test Agent", Division.MULTIFAMILY, Role.AGENT, True),
+    ("test.retail@aat.com", "Test Retail Head", Division.OFFICE, Role.DIVISION_HEAD, True),
 ]
+
+TEST_ACCOUNT_EMAILS = {email for email, _n, _d, _r, is_test in DEFAULT_ROSTER if is_test}
 
 DEFAULT_PASSWORD = "prototype"
 
@@ -44,7 +59,7 @@ FALLBACK_ROLE = Role.AGENT
 def seed_roster(db: Session) -> int:
     """Create the starting roster once. Existing users are left alone."""
     created = 0
-    for email, name, division, role in DEFAULT_ROSTER:
+    for email, name, division, role, _is_test in DEFAULT_ROSTER:
         if db.query(User).filter(User.email == email).first():
             continue
         db.add(
@@ -89,9 +104,15 @@ def resolve_session_user(db: Session, email: str, division: Division, name: str 
     return user
 
 
-def profile(user: User) -> dict:
-    """Everything the Profile page shows about one account."""
-    granted = permissions_for(user.role)
+def profile(user: User, db: Optional[Session] = None) -> dict:
+    """Everything the Profile page shows about one account.
+
+    With a session, what the role grants is read from the live configuration the
+    Permissions page writes; without one, from the shipped defaults. Every caller
+    that has a session should pass it — the UI gates on these flags, so reading
+    the constant instead would show access that has since been changed.
+    """
+    granted = permission_repo.granted_for(db, user.role) if db is not None else permissions_for(user.role)
     return {
         "id": user.id,
         "email": user.email,
@@ -126,7 +147,7 @@ def list_users(db: Session, division: Optional[Division] = None) -> List[dict]:
     if division is not None:
         query = query.filter(User.division == division)
     users = query.order_by(User.name.asc()).all()
-    return [profile(u) for u in users]
+    return [profile(u, db) for u in users]
 
 
 def roster_accounts(db: Session) -> List[dict]:
@@ -138,11 +159,11 @@ def roster_accounts(db: Session) -> List[dict]:
     that is the capability the login choice most often decides.
     """
     accounts = []
-    for email, _name, _division, _role in DEFAULT_ROSTER:
+    for email, _name, _division, _role, is_test in DEFAULT_ROSTER:
         user = db.query(User).filter(User.email == email).first()
         if not user:
             continue
-        granted = permissions_for(user.role)
+        granted = permission_repo.granted_for(db, user.role)
         accounts.append(
             {
                 "email": user.email,
@@ -152,21 +173,28 @@ def roster_accounts(db: Session) -> List[dict]:
                 "role_description": ROLE_DESCRIPTIONS.get(user.role, ""),
                 "division_key": "retail" if user.division == Division.OFFICE else "mf",
                 "can_edit_workflow": Permission.EDIT_WORKFLOW.value in granted,
+                "is_test": is_test,
             }
         )
     accounts.sort(key=lambda a: ROLE_ORDER.index(Role(a["role"])) if Role(a["role"]) in ROLE_ORDER else 0)
     return accounts
 
 
-def role_catalog() -> List[dict]:
-    """Every role and what it grants — the Admin page's reference table."""
+def role_catalog(db: Optional[Session] = None) -> List[dict]:
+    """Every role and what it grants — the Admin page's reference table.
+
+    Reads the live grants when given a session, so the Admin page agrees with
+    the Permissions page rather than quoting the shipped defaults back.
+    """
     return [
         {
             "key": role.value,
             "label": ROLE_LABELS.get(role, role.value),
             "description": ROLE_DESCRIPTIONS.get(role, ""),
             "level": index + 1,
-            "permissions": permissions_for(role),
+            "permissions": (
+                permission_repo.granted_for(db, role) if db is not None else permissions_for(role)
+            ),
         }
         for index, role in enumerate(ROLE_ORDER)
     ]

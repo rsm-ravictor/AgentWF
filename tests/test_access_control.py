@@ -8,8 +8,10 @@ the privilege ladder rather than each individual grant.
 """
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from aat_system import user_repo
+from aat_system import permission_repo, user_repo
 from aat_system.auth import assert_folder_access, get_allowed_folders
 from aat_system.config import (
     CORE_FOLDERS,
@@ -21,11 +23,20 @@ from aat_system.config import (
     has_permission,
     permissions_for,
 )
-from aat_system.models import User
+from aat_system.models import Base, User
 
 
 def user(role, division=Division.MULTIFAMILY):
     return User(id=1, email="x@aat.com", name="X", division=division, role=role, hashed_password="x")
+
+
+@pytest.fixture()
+def db(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'access.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
+    yield session
+    session.close()
 
 
 def test_every_role_appears_exactly_once_in_the_ladder():
@@ -124,16 +135,7 @@ def test_role_catalog_is_ordered_least_privileged_first():
     assert catalog[-1]["key"] == Role.SUPER_USER.value
 
 
-def test_unknown_email_is_provisioned_at_least_privilege(tmp_path):
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-
-    from aat_system.models import Base
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'users.db'}", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    db = sessionmaker(bind=engine)()
-
+def test_unknown_email_is_provisioned_at_least_privilege(db):
     resolved = user_repo.resolve_session_user(db, "stranger@example.com", Division.MULTIFAMILY)
     assert resolved.role == user_repo.FALLBACK_ROLE == Role.AGENT
 
@@ -141,4 +143,98 @@ def test_unknown_email_is_provisioned_at_least_privilege(tmp_path):
     user_repo.seed_roster(db)
     admin = user_repo.resolve_session_user(db, "admin@aat.com", Division.MULTIFAMILY)
     assert admin.role == Role.SUPER_USER
-    db.close()
+
+
+# ---------------- The roster, including the test accounts ----------------
+
+def test_the_roster_covers_every_role(db):
+    user_repo.seed_roster(db)
+    roles = {a["role"] for a in user_repo.roster_accounts(db)}
+    assert roles == {r.value for r in Role}
+
+
+def test_there_is_a_test_account_for_every_role(db):
+    user_repo.seed_roster(db)
+    test_accounts = [a for a in user_repo.roster_accounts(db) if a["is_test"]]
+    assert {a["role"] for a in test_accounts} == {r.value for r in Role}
+    # Named so nobody mistakes one for a real person's account.
+    assert all(a["name"].startswith("Test") for a in test_accounts)
+    assert all(a["email"].startswith("test.") for a in test_accounts)
+
+
+def test_seeding_the_roster_twice_creates_no_duplicates(db):
+    first = user_repo.seed_roster(db)
+    assert first == len(user_repo.DEFAULT_ROSTER)
+    assert user_repo.seed_roster(db) == 0
+
+
+# ---------------- Permissions configured at runtime ----------------
+
+def test_permissions_start_at_the_shipped_defaults(db):
+    permission_repo.ensure_seeded(db)
+    for role in Role:
+        assert permission_repo.granted_for(db, role) == permissions_for(role)
+
+
+def test_an_unseeded_role_falls_back_to_its_shipped_default(db):
+    # A database that predates the table still answers correctly.
+    assert permission_repo.granted_for(db, Role.AGENT) == permissions_for(Role.AGENT)
+
+
+def test_granting_a_permission_takes_effect_for_that_role(db):
+    permission_repo.ensure_seeded(db)
+    assert not permission_repo.role_has(db, Role.AGENT, Permission.EDIT_WORKFLOW)
+
+    permission_repo.set_for(
+        db,
+        Role.AGENT,
+        permissions_for(Role.AGENT) + [Permission.EDIT_WORKFLOW.value],
+        updated_by="Jordan",
+    )
+
+    assert permission_repo.role_has(db, Role.AGENT, Permission.EDIT_WORKFLOW)
+    # And the profile the UI gates on agrees, rather than quoting the constant.
+    profile = user_repo.profile(user(Role.AGENT), db)
+    assert profile["can_edit_workflow"] is True
+    assert Permission.EDIT_WORKFLOW.value in profile["permissions"]
+
+
+def test_a_role_can_be_stripped_to_nothing_and_stays_stripped(db):
+    permission_repo.set_for(db, Role.REVIEWER, [], updated_by="Jordan")
+    # The distinction that matters: no permissions is a real answer, not an
+    # unconfigured role that quietly reverts to the defaults.
+    assert permission_repo.granted_for(db, Role.REVIEWER) == []
+    permission_repo.ensure_seeded(db)
+    assert permission_repo.granted_for(db, Role.REVIEWER) == []
+
+
+def test_unknown_permission_keys_are_ignored(db):
+    permission_repo.set_for(db, Role.AGENT, ["edit_workflow", "become_president"])
+    assert permission_repo.granted_for(db, Role.AGENT) == [Permission.EDIT_WORKFLOW.value]
+
+
+def test_restoring_defaults_undoes_every_change(db):
+    permission_repo.set_for(db, Role.AGENT, [Permission.MANAGE_USERS.value])
+    permission_repo.set_for(db, Role.SUPER_USER, [])
+
+    permission_repo.reset(db, updated_by="Jordan")
+
+    for role in Role:
+        assert permission_repo.granted_for(db, role) == permissions_for(role)
+
+
+def test_the_matrix_reports_where_a_role_differs_from_default(db):
+    permission_repo.set_for(db, Role.AGENT, [Permission.EDIT_WORKFLOW.value])
+    rows = {r["key"]: r for r in permission_repo.matrix(db)}
+
+    assert rows[Role.AGENT.value]["is_default"] is False
+    assert rows[Role.AGENT.value]["default"] == permissions_for(Role.AGENT)
+    assert rows[Role.REVIEWER.value]["is_default"] is True
+    # Least privileged first, so the page reads as a ladder.
+    assert [r["key"] for r in permission_repo.matrix(db)][0] == Role.AGENT.value
+
+
+def test_the_role_catalog_reflects_a_live_change(db):
+    permission_repo.set_for(db, Role.AGENT, [Permission.EDIT_WORKFLOW.value])
+    catalog = {r["key"]: r for r in user_repo.role_catalog(db)}
+    assert catalog[Role.AGENT.value]["permissions"] == [Permission.EDIT_WORKFLOW.value]

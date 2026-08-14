@@ -116,6 +116,26 @@ class WorkflowStep(Base):
     )
 
 
+class RolePermissionSet(Base):
+    """What one role is allowed to do, as configured at runtime.
+
+    `config.ROLE_PERMISSIONS` is the shipped default; a row here is what the
+    Permissions page wrote when someone changed a role. The whole grant list is
+    one row rather than a row per grant, so "this role has been configured and
+    holds nothing" is representable — with a row per grant it would be
+    indistinguishable from "never configured", and the defaults would silently
+    come back.
+    """
+
+    __tablename__ = "role_permission_sets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(Enum(Role), nullable=False, unique=True, index=True)
+    permissions = Column(Text, nullable=False, default="[]")  # JSON list of permission keys
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String, nullable=True)
+
+
 class WorkflowRevision(Base):
     """One saved version of one workflow's definition.
 
