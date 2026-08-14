@@ -91,6 +91,18 @@ does when it reaches it:
 - `aat_system/main.py` — the FastAPI app.
 - `static/` — the UI. No build step: `index.html`, `app.js`, `style.css`.
 
+## Look and feel
+
+Quiet monochrome: a warm neutral palette, one muted sand accent, hairline rules
+and whitespace rather than cards, flat surfaces, square corners, thin-line
+monochrome icons, and uppercase wide-tracked labels over a light-weight sans.
+
+Every colour is a design token at the top of `style.css` — nothing is styled
+per screen. Light and dark are the same design inverted; dark follows the system
+by default (no `data-theme` attribute is written until you use the toggle). The
+one place colour carries meaning on its own is live run status: running, done and
+needs-review stay legible at a glance in both modes.
+
 ## Getting started
 
 ```bash

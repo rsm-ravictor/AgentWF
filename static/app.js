@@ -120,13 +120,27 @@
 
   // ---------------- Theme ----------------
 
+  const systemPrefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  // No stored choice means no data-theme attribute at all, so the stylesheet's
+  // prefers-color-scheme block governs and the app keeps following the system
+  // as it changes. Stamping a theme on first load would silently end that.
   function applyTheme(theme) {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('aat-theme', theme);
+    if (theme === 'light' || theme === 'dark') {
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem('aat-theme', theme);
+    } else {
+      delete document.documentElement.dataset.theme;
+      localStorage.removeItem('aat-theme');
+    }
+  }
+
+  function currentTheme() {
+    return document.documentElement.dataset.theme || (systemPrefersDark() ? 'dark' : 'light');
   }
 
   qs('#theme-toggle').addEventListener('click', () => {
-    applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
   });
 
   // ---------------- Session ----------------
@@ -1906,10 +1920,8 @@
   // ---------------- Boot ----------------
 
   (async function boot() {
-    applyTheme(
-      localStorage.getItem('aat-theme') ||
-        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    );
+    // Only a stored choice is applied; otherwise the system preference stands.
+    applyTheme(localStorage.getItem('aat-theme'));
 
     let saved = null;
     try {

@@ -371,13 +371,43 @@ belonging to the division picked above it.
 > path to a verdict rather than two that can diverge. `/phase2/email-ingestion` is gone —
 > Phase 2 ingestion is not built, and a placeholder endpoint said otherwise.
 
+### Visual design — quiet monochrome
+The whole app is one restrained aesthetic: a warm neutral palette, a single muted
+sand/stone accent, hairline rules and whitespace instead of cards. Light is a warm
+off-white (`#F7F5F2`) with near-black text (`#111111`); dark is a warm near-black
+(`#121110`, never pure black) with warm off-white text — the same design inverted,
+not a second design language.
+
+Every colour is a token at the top of `style.css`, defined once in three blocks: the
+light `:root`, a `prefers-color-scheme: dark` block guarded by
+`:root:not([data-theme='light'])`, and a `[data-theme='dark']` block so the manual
+toggle wins in both directions. No component defines a colour of its own, so the
+theme switch is consistent across login, dashboard, use case detail, reference,
+settings and profile without any screen being styled individually. `color-scheme` is
+set alongside, so native selects, checkboxes and scrollbars follow the theme too.
+
+Dark mode follows the system by default: with no stored choice the app writes no
+`data-theme` attribute at all and the media query governs, so it keeps tracking the
+system as it changes. The toggle stores a preference only once someone actually
+uses it.
+
+Held to throughout: one sans family, light weight body, uppercase wide-tracked
+labels and section headers, a three-size type scale, flat surfaces (no shadows or
+gradients), square corners, buttons as a word inside a hairline rather than a filled
+pill, and thin-line monochrome icons — stroke width is overridden in CSS so every
+symbol matches and icons only invert between modes.
+
+The deliberate exception is **live run status**. Running / done / needs review carry
+the accent (or primary text for done) clearly enough to read at a glance, because a
+run's state is the one thing minimalism must not hide. Step kinds, formerly six
+hues, are now a tonal ramp read together with their uppercase labels.
+
 ### Frontend
 Single-page app in `static/` (`index.html`, `app.js`, `style.css`) — no build step. It
 implements the screens described under "Frontend Redesign" above: login/division,
 division dashboard, use case detail and reference in the main nav, plus settings (profiles
 and role permissions) and the personal profile page reached from the header's user menu. The use case shell is written
-once and reused for every use case; a new use case needs no new frontend code. Dark mode
-follows system preference and persists.
+once and reused for every use case; a new use case needs no new frontend code.
 
 The dashboard carries four at-a-glance tiles (use cases, documents on file, leases
 expiring in 30 days, pending human review), the use case tile grid, a folder grid that
