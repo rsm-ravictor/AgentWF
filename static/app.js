@@ -161,6 +161,41 @@
     btn.addEventListener('click', () => selectDivision(btn.dataset.division))
   );
 
+  // The seeded accounts, one button each. Which role you sign in as decides
+  // whether you can edit a definition or sign off, so it is worth showing.
+  async function renderLoginAccounts() {
+    let accounts;
+    try {
+      accounts = (await api('/session/accounts')).accounts;
+    } catch (err) {
+      return; // The typed-username path still works without the quick pick.
+    }
+    qs('#login-accounts').innerHTML = accounts
+      .map(
+        (a) => `
+        <button type="button" class="la-item" data-email="${esc(a.email)}" data-division="${esc(
+          a.division_key
+        )}" title="${esc(a.role_description)}">
+          <span class="la-role">${esc(a.role_label)}<span class="la-div">${esc(
+            divisionLabels[a.division_key] || ''
+          )}</span></span>
+          <span class="la-email">${esc(a.name)} · ${esc(a.email)}</span>
+          <span class="la-grant ${a.can_edit_workflow ? 'can' : 'cannot'}">${
+            a.can_edit_workflow ? 'can edit workflows' : 'cannot edit workflows'
+          }</span>
+        </button>`
+      )
+      .join('');
+
+    qsa('#login-accounts .la-item').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        qs('#login-user').value = btn.dataset.email;
+        selectDivision(btn.dataset.division);
+        qs('#login-form').requestSubmit();
+      })
+    );
+  }
+
   qs('#login-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const email = qs('#login-user').value.trim();
@@ -199,6 +234,7 @@
     qs('#app').classList.add('hidden');
     qs('#screen-login').classList.remove('hidden');
     qs('#login-pass').value = '';
+    renderLoginAccounts();
   });
 
   // ---------------- User menu ----------------
@@ -1370,5 +1406,6 @@
         localStorage.removeItem('aat-session');
       }
     }
+    renderLoginAccounts();
   })();
 })();

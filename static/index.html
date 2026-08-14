@@ -68,10 +68,17 @@
           </div>
           <p class="login-error" id="login-error" role="alert"></p>
           <button type="submit" class="btn btn-primary btn-block" id="login-submit">Sign in</button>
+
+          <!-- Prototype: the username sets the access level, so make the roles
+               pickable instead of something to memorise. -->
+          <div class="login-accounts">
+            <p class="la-label">Or sign in as</p>
+            <div class="la-list" id="login-accounts"></div>
+          </div>
           <p class="login-hint">
-            Prototype build — any password works. Your <strong>username sets your access level</strong>:
-            <code>admin@aat.com</code> (super user), <code>head.mf@aat.com</code> (division head),
-            <code>reviewer@aat.com</code>, <code>agent@aat.com</code>. Anything else is provisioned as an Agent.
+            Prototype build — any password works, and the <strong>username sets your access
+            level</strong>. An account that is not on this list is provisioned as an Agent, which
+            can run workflows and upload but cannot edit a workflow definition or sign off.
           </p>
         </form>
       </div>

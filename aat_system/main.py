@@ -557,6 +557,17 @@ def resolve_session(payload: SessionResolveRequest, db: Session = Depends(get_db
     return {"profile": user_repo.profile(user)}
 
 
+@app.get("/session/accounts")
+def session_accounts(db: Session = Depends(get_db)):
+    """The seeded accounts the login screen offers as a quick pick.
+
+    Prototype affordance: because the username is what sets the access level,
+    the roles have to be discoverable rather than memorised. Remove this with the
+    simulated login when real authentication lands.
+    """
+    return {"accounts": user_repo.roster_accounts(db)}
+
+
 @app.get("/roles")
 def list_roles():
     """Every role, its access level, and the permissions it grants."""

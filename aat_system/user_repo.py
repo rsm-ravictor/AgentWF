@@ -129,6 +129,35 @@ def list_users(db: Session, division: Optional[Division] = None) -> List[dict]:
     return [profile(u) for u in users]
 
 
+def roster_accounts(db: Session) -> List[dict]:
+    """The seeded accounts, for the prototype login screen's quick pick.
+
+    Deliberately only the seeded roster rather than every provisioned user, so a
+    login screen does not enumerate the user table. Ordered least to most
+    privileged, and each says whether it can edit a workflow definition, since
+    that is the capability the login choice most often decides.
+    """
+    accounts = []
+    for email, _name, _division, _role in DEFAULT_ROSTER:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            continue
+        granted = permissions_for(user.role)
+        accounts.append(
+            {
+                "email": user.email,
+                "name": user.name,
+                "role": user.role.value,
+                "role_label": ROLE_LABELS.get(user.role, user.role.value),
+                "role_description": ROLE_DESCRIPTIONS.get(user.role, ""),
+                "division_key": "retail" if user.division == Division.OFFICE else "mf",
+                "can_edit_workflow": Permission.EDIT_WORKFLOW.value in granted,
+            }
+        )
+    accounts.sort(key=lambda a: ROLE_ORDER.index(Role(a["role"])) if Role(a["role"]) in ROLE_ORDER else 0)
+    return accounts
+
+
 def role_catalog() -> List[dict]:
     """Every role and what it grants — the Admin page's reference table."""
     return [

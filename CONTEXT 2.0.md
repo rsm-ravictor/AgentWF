@@ -64,6 +64,10 @@ migrated toward this.
 - Shows the company name and a login screen.
 - Login selects a division: **Residential/Multifamily** or **Office/Retail**.
 - Division selection determines which dashboard, folders, and use cases the user sees next.
+- While the login is simulated, the username is what sets the access level, so the seeded
+  accounts are listed as one-click sign-ins (`GET /session/accounts`) with the role each
+  holds and whether it can edit a workflow definition. Picking a role is a choice on the
+  screen rather than an email to remember. This affordance goes when real auth lands.
 
 ### 2. Division Dashboard
 - Landing page per division after login.
@@ -248,6 +252,7 @@ dashboard, so a demo queue is never mistaken for real work.
 | `GET /repository/documents`, `GET /repository/documents/{id}/download` | Folder contents and archived files |
 | `POST /token`, `POST /users`, `GET /users/me` | Auth and user management |
 | `POST /session/resolve`, `GET /roles`, `GET /admin/users`, `PATCH /admin/users/{id}` | Session role resolution and administration |
+| `GET /session/accounts` | The seeded accounts the login screen offers as a quick pick |
 | `POST /documents/upload` | Ingest into the repository |
 | `GET /leases/expired` | Lease expiration scan |
 | `GET /folders/{division}/{folder}/documents` | Folder contents (authenticated) |

@@ -68,9 +68,14 @@ uvicorn aat_system.main:app --reload
 ```
 
 Open http://127.0.0.1:8000/. Any password works in this prototype; the
-**username sets the access level** — `admin@aat.com` (super user),
-`head.mf@aat.com` (division head), `reviewer@aat.com`, `agent@aat.com`. Anything
-else is provisioned as an Agent.
+**username sets the access level**, and the login screen lists the seeded
+accounts to sign in as one click each — `admin@aat.com` (super user),
+`head.mf@aat.com` (division head), `owner@aat.com`, `reviewer@aat.com`,
+`agent@aat.com`. Anything else is provisioned as an Agent.
+
+Editing a workflow definition needs `edit_workflow`, which only Division head,
+Administrator and Super user hold — sign in as one of those if the **Edit**
+button on a use case is disabled.
 
 Without an API key the app still runs: a run with no attachment reports on what
 is already on file, and the UI says up front that grading is unavailable.
