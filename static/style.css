@@ -1,10 +1,17 @@
 /* AAT — Access Agent Toolkit
  *
- * Quiet monochrome. One warm neutral palette, one muted sand accent, hairline
- * rules instead of cards, and whitespace instead of boxes. Light and dark are
- * the same design inverted, not two designs: every colour is a token defined
- * once here, so a screen never styles itself.
+ * Quiet monochrome, tuned to sit beside americanassetstrust.com so this reads as
+ * the same organisation's internal tool rather than a separate product. Their
+ * identity is cool: slate ink (#222A32), an azure/teal accent (#2498E3, #09729F),
+ * light grey neutrals, and an Open Sans / Helvetica Neue stack. This takes those
+ * as the palette and keeps the restraint — hairline rules and whitespace instead
+ * of cards, flat surfaces, square corners — so it is complementary, not a copy.
  *
+ * The accent is deliberately a deeper, quieter azure than the corporate site's
+ * link blue: an internal tool people look at all day should not carry marketing
+ * contrast.
+ *
+ * Every colour is a token defined once here, so a screen never styles itself.
  * Dark is defined twice on purpose — under prefers-color-scheme for the default
  * "follow the system" state, and under [data-theme='dark'] so the manual toggle
  * wins in both directions.
@@ -18,23 +25,23 @@
   /* Surfaces. There is only one background: panels are separated by rules and
      space, not by a second shade. --bg-sunken is a barely-there wash reserved
      for inputs and inset areas. */
-  --bg: #f7f5f2;
-  --bg-raised: #f7f5f2;
-  --bg-sunken: #f1eeea;
+  --bg: #f7f8f9;
+  --bg-raised: #f7f8f9;
+  --bg-sunken: #eef0f2;
 
-  --text: #111111;        /* near-black, never pure */
-  --text-soft: #4a453f;
-  --text-faint: #6b6660;  /* warm gray */
+  --text: #222a32;        /* the corporate site's slate — near-black, never pure */
+  --text-soft: #4a545e;
+  --text-faint: #626c75;  /* cool gray, dark enough to clear AA on the off-white */
 
-  --rule: #e5e2dc;        /* hairline dividers */
-  --border: #e5e2dc;
-  --border-strong: #d6d2ca;
+  --rule: #e3e6e9;        /* hairline dividers */
+  --border: #e3e6e9;
+  --border-strong: #cfd4d9;
 
-  /* The single accent: muted sand/stone. Reserved for active and status
-     states — never decoration. */
-  --accent: #8a7856;
-  --accent-text: #6f6045;
-  --accent-wash: #ece7dd;
+  /* The single accent: the corporate teal-blue, held back from the marketing
+     link colour. Reserved for active and status states — never decoration. */
+  --accent: #0f6e97;
+  --accent-text: #0b5a7c;
+  --accent-wash: #e7eef2;
 
   /* Status. Live process states must stay legible, so they read in the accent
      while everything else stays neutral. */
@@ -43,8 +50,8 @@
   --status-attention: var(--accent-text);
 
   /* The one non-accent tone in the system, for genuine failure only: a muted
-     terracotta, never a bright alert red. */
-  --alert: #8f5f4f;
+     brick, never a bright alert red. */
+  --alert: #92544e;
 
   /* Legacy semantic names, remapped so no component carries its own colour. */
   --ok: var(--text);
@@ -62,12 +69,12 @@
 
   /* Step kinds. A tonal ramp rather than six hues — the diagram stays readable
      by tone and by its uppercase label, not by colour-coding. */
-  --k-intake: #8a7856;
-  --k-analysis: #6b6660;
-  --k-decision: #111111;
-  --k-human: #a09380;
-  --k-record: #4a453f;
-  --k-note: #b6b0a6;
+  --k-intake: #0f6e97;
+  --k-analysis: #5b6670;
+  --k-decision: #222a32;
+  --k-human: #87919a;
+  --k-record: #46505a;
+  --k-note: #aeb5bb;
 
   --fs-xs: 11px;
   --fs-sm: 13px;
@@ -79,59 +86,60 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
-    --bg: #121110;      /* warm near-black, never #000 */
-    --bg-raised: #121110;
-    --bg-sunken: #1a1917;
+    /* The corporate slate taken all the way down — near-black, never #000. */
+    --bg: #14171a;
+    --bg-raised: #14171a;
+    --bg-sunken: #1b1f23;
 
-    --text: #f2efea;
-    --text-soft: #b8b2a9;
-    --text-faint: #9c968e;
+    --text: #edeff1;
+    --text-soft: #b2bac2;
+    --text-faint: #8f98a1;
 
-    --rule: #2a2825;
-    --border: #2a2825;
-    --border-strong: #3a3733;
+    --rule: #272c31;
+    --border: #272c31;
+    --border-strong: #363c43;
 
-    --accent: #a79a85;  /* same stone, dimmed so it does not glow */
-    --accent-text: #bfb3a0;
-    --accent-wash: #232120;
+    --accent: #6fa8c9;  /* the same azure, dimmed so it does not glow */
+    --accent-text: #8cbbd8;
+    --accent-wash: #1c2329;
 
-    --alert: #c08d7c;
+    --alert: #c79289;
 
-    --k-intake: #a79a85;
-    --k-analysis: #9c968e;
-    --k-decision: #f2efea;
-    --k-human: #7d766c;
-    --k-record: #b8b2a9;
-    --k-note: #55504a;
+    --k-intake: #6fa8c9;
+    --k-analysis: #8f98a1;
+    --k-decision: #edeff1;
+    --k-human: #6e777f;
+    --k-record: #b2bac2;
+    --k-note: #4a5158;
   }
 }
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --bg: #121110;
-  --bg-raised: #121110;
-  --bg-sunken: #1a1917;
+  --bg: #14171a;
+  --bg-raised: #14171a;
+  --bg-sunken: #1b1f23;
 
-  --text: #f2efea;
-  --text-soft: #b8b2a9;
-  --text-faint: #9c968e;
+  --text: #edeff1;
+  --text-soft: #b2bac2;
+  --text-faint: #8f98a1;
 
-  --rule: #2a2825;
-  --border: #2a2825;
-  --border-strong: #3a3733;
+  --rule: #272c31;
+  --border: #272c31;
+  --border-strong: #363c43;
 
-  --accent: #a79a85;
-  --accent-text: #bfb3a0;
-  --accent-wash: #232120;
+  --accent: #6fa8c9;
+  --accent-text: #8cbbd8;
+  --accent-wash: #1c2329;
 
-  --alert: #c08d7c;
+  --alert: #c79289;
 
-  --k-intake: #a79a85;
-  --k-analysis: #9c968e;
-  --k-decision: #f2efea;
-  --k-human: #7d766c;
-  --k-record: #b8b2a9;
-  --k-note: #55504a;
+  --k-intake: #6fa8c9;
+  --k-analysis: #8f98a1;
+  --k-decision: #edeff1;
+  --k-human: #6e777f;
+  --k-record: #b2bac2;
+  --k-note: #4a5158;
 }
 
 * { box-sizing: border-box; }
@@ -140,7 +148,10 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Helvetica Neue', Helvetica, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  /* The corporate site's stack, verbatim, so the two read as one family. Open
+     Sans is used if the machine has it and Helvetica Neue carries it if not —
+     no webfont is loaded, since this runs locally. */
+  font-family: 'Open Sans', 'Helvetica Neue', Helvetica, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
   font-size: var(--fs-base);
   font-weight: 300;
   line-height: 1.65;

@@ -371,12 +371,19 @@ belonging to the division picked above it.
 > path to a verdict rather than two that can diverge. `/phase2/email-ingestion` is gone —
 > Phase 2 ingestion is not built, and a placeholder endpoint said otherwise.
 
-### Visual design — quiet monochrome
-The whole app is one restrained aesthetic: a warm neutral palette, a single muted
-sand/stone accent, hairline rules and whitespace instead of cards. Light is a warm
-off-white (`#F7F5F2`) with near-black text (`#111111`); dark is a warm near-black
-(`#121110`, never pure black) with warm off-white text — the same design inverted,
-not a second design language.
+### Visual design — quiet monochrome, tuned to the corporate site
+The whole app is one restrained aesthetic: hairline rules and whitespace instead of
+cards, flat surfaces, square corners, thin-line monochrome icons.
+
+The palette is taken from **americanassetstrust.com**, so this reads as the same
+organisation's internal tool rather than a separate product: their slate ink
+(`#222A32`) is the text colour, their azure/teal (`#2498E3`, `#09729F`) becomes a
+deeper, quieter accent (`#0F6E97`) — an internal tool people look at all day should
+not carry marketing contrast — and their `"Open Sans", "Helvetica Neue", Helvetica`
+stack is used verbatim, with no webfont loaded since this runs locally. Light is a
+cool off-white (`#F7F8F9`); dark takes the same slate all the way down (`#14171A`,
+never pure black) with the accent dimmed to `#6FA8C9` so it does not glow. The same
+design inverted, not a second design language.
 
 Every colour is a token at the top of `style.css`, defined once in three blocks: the
 light `:root`, a `prefers-color-scheme: dark` block guarded by
@@ -395,7 +402,8 @@ Held to throughout: one sans family, light weight body, uppercase wide-tracked
 labels and section headers, a three-size type scale, flat surfaces (no shadows or
 gradients), square corners, buttons as a word inside a hairline rather than a filled
 pill, and thin-line monochrome icons — stroke width is overridden in CSS so every
-symbol matches and icons only invert between modes.
+symbol matches and icons only invert between modes. Headlines stay sentence case, as
+they are on the corporate site; the uppercase treatment is reserved for labels.
 
 The deliberate exception is **live run status**. Running / done / needs review carry
 the accent (or primary text for done) clearly enough to read at a glance, because a

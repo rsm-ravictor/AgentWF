@@ -93,9 +93,12 @@ does when it reaches it:
 
 ## Look and feel
 
-Quiet monochrome: a warm neutral palette, one muted sand accent, hairline rules
-and whitespace rather than cards, flat surfaces, square corners, thin-line
-monochrome icons, and uppercase wide-tracked labels over a light-weight sans.
+Quiet and restrained, and deliberately complementary to
+[americanassetstrust.com](https://www.americanassetstrust.com/): their slate ink
+`#222A32`, a deeper and quieter version of their azure `#0F6E97`, cool grey
+neutrals, and their `"Open Sans", "Helvetica Neue"` stack. Hairline rules and
+whitespace rather than cards, flat surfaces, square corners, thin-line monochrome
+icons, and uppercase wide-tracked labels over a light-weight sans.
 
 Every colour is a design token at the top of `style.css` — nothing is styled
 per screen. Light and dark are the same design inverted; dark follows the system
