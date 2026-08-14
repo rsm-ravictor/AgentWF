@@ -92,7 +92,6 @@
           <nav class="nav-tabs" aria-label="Primary">
             <button class="nav-tab active" data-target="dashboard">Dashboard</button>
             <button class="nav-tab" data-target="reference">Reference</button>
-            <button class="nav-tab" data-target="permissions">Permissions</button>
           </nav>
         </div>
         <div class="app-nav-right">
@@ -115,8 +114,8 @@
               <button class="ud-item" data-target="profile" role="menuitem">
                 <svg class="icon"><use href="#i-user"/></svg> Profile &amp; access
               </button>
-              <button class="ud-item hidden" id="ud-admin" data-target="admin" role="menuitem">
-                <svg class="icon"><use href="#i-gear"/></svg> Administration
+              <button class="ud-item" id="ud-settings" data-target="settings" role="menuitem">
+                <svg class="icon"><use href="#i-gear"/></svg> Settings
               </button>
               <div class="ud-sep"></div>
               <button class="ud-item" id="signout-btn" role="menuitem">
@@ -379,23 +378,29 @@
         <div id="profile-body"></div>
       </main>
 
-      <!-- ============ ADMIN ============ -->
-      <main class="app-main view hidden" id="view-admin">
+      <!-- ============ SETTINGS ============ -->
+      <!-- Accounts and access in one place: create a profile, choose its role,
+           and set what that role is allowed to do. -->
+      <main class="app-main view hidden" id="view-settings">
         <div class="page-head">
-          <h1>Administration</h1>
-          <p>Manage who has access, what role they hold, and what that role grants.</p>
+          <h1>Settings</h1>
+          <p>Create profiles, set the role each one holds, and configure what every role is
+            allowed to do. Permissions here are the gates the whole app reads.</p>
         </div>
-        <div id="admin-body"></div>
-      </main>
 
-      <!-- ============ PERMISSIONS ============ -->
-      <main class="app-main view hidden" id="view-permissions">
-        <div class="page-head">
-          <h1>Permissions</h1>
-          <p>What each role is allowed to do. These are the gates the whole app reads — a
-            change here changes what the system permits, not just what the screen offers.</p>
-        </div>
-        <div id="permissions-body"></div>
+        <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
+          <button class="settings-tab active" data-section="profiles">Profiles</button>
+          <button class="settings-tab" data-section="permissions">Role permissions</button>
+        </nav>
+
+        <section class="settings-section" id="settings-profiles">
+          <div id="settings-create"></div>
+          <div id="settings-roster"></div>
+        </section>
+
+        <section class="settings-section hidden" id="settings-permissions">
+          <div id="permissions-body"></div>
+        </section>
       </main>
     </div>
 

@@ -58,6 +58,15 @@ class DefinitionUpdateRequest(BaseModel):
     updated_by: str = ""
 
 
+class ProfileCreateRequest(BaseModel):
+    name: str = ""
+    email: str
+    division: str = "mf"
+    role: Role = Role.AGENT
+    password: str = ""
+    acting_user_id: Optional[int] = None
+
+
 class RolePermissionsRequest(BaseModel):
     permissions: List[str] = []
     updated_by: str = ""
@@ -674,6 +683,42 @@ def reset_permissions(payload: RolePermissionsRequest, db: Session = Depends(get
     """Put every role back to the permissions the system ships with."""
     permission_repo.reset(db, updated_by=payload.updated_by)
     return {"roles": permission_repo.matrix(db), "permissions": permission_repo.catalog()}
+
+
+@app.post("/admin/users")
+def admin_create_user(payload: ProfileCreateRequest, db: Session = Depends(get_db)):
+    """Create a profile from the Settings page.
+
+    Gated on the acting account holding MANAGE_USERS, same as changing one. What
+    that role grants is configurable on the same page, so this is a gate someone
+    can open deliberately rather than a wall.
+    """
+    actor = db.get(User, payload.acting_user_id) if payload.acting_user_id else None
+    if actor is None:
+        raise HTTPException(status_code=403, detail="An acting account is required.")
+    if not permission_repo.role_has(db, actor.role, Permission.MANAGE_USERS):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Your role ({actor.role.value}) does not grant 'manage_users'. "
+                "Grant it under Role permissions to create accounts."
+            ),
+        )
+    if payload.role == Role.SUPER_USER and actor.role != Role.SUPER_USER:
+        raise HTTPException(status_code=403, detail="Only a super user can create a super user.")
+
+    try:
+        user = user_repo.create_account(
+            db,
+            email=payload.email,
+            name=payload.name,
+            division=resolve_division(payload.division),
+            role=payload.role,
+            password=payload.password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"user": user_repo.profile(user, db)}
 
 
 @app.patch("/admin/users/{user_id}")

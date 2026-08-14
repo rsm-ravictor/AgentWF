@@ -116,14 +116,24 @@ use case. It holds:
   standard phrasing used across use case narratives, so terms stay consistent instead of
   being redefined slightly differently inside each use case's narrative panel.
 
-### 5. Account and access screens
-- **Permissions** — a main-nav page holding the role × permission matrix: what each role
-  may do, editable in place, with the signed-in account's row highlighted and a
-  restore-defaults action. Not division-scoped; roles mean the same thing everywhere.
-- **Profile & access** (user menu) — what the signed-in account is allowed to do and where
-  those limits come from (role, the permissions it grants, division scope).
-- **Administration** (user menu) — the roster: who has access, what role they hold, and
-  what that role grants. Only shown to accounts that can manage users.
+### 5. Settings, and the personal profile page
+**Settings** (user menu) is where accounts and access live, because they are one subject:
+a profile's role is a name for a set of permissions, so creating a profile and defining
+what its role means belong on the same page. Two sections:
+
+- **Profiles** — create a profile (name, email, division, role, optional password) with a
+  live preview of exactly what the chosen role grants, above the roster of existing
+  profiles with their role, division and active state editable in place.
+- **Role permissions** — the role × permission matrix, editable in place, with the
+  signed-in account's own row highlighted and a restore-defaults action. Not
+  division-scoped; roles mean the same thing everywhere.
+
+Settings is reachable by every role. Editing profiles needs `manage_users` and the create
+form says so, but the permission that would grant it is a checkbox in the next section
+along — so a gate is something to open deliberately rather than a dead end.
+
+**Profile & access** (user menu) stays separate as the read-only personal page: what this
+account may do and where those limits come from.
 
 ### Design implication
 Because every use case shares this same page shell (header, 2/3 diagram + 1/3 narrative,
@@ -258,11 +268,12 @@ per role, not a row per grant, so "this role has been configured and holds nothi
 representable — with a row per grant it would be indistinguishable from "never
 configured", and the defaults would silently come back.
 
-The **Permissions page** is a role × permission matrix of checkboxes, with the signed-in
+The matrix lives in **Settings → Role permissions**: checkboxes per role, the signed-in
 account's own row highlighted, a marker on any role that differs from its shipped default,
 and a restore-defaults action. Saving re-resolves the current session, so a permission
 granted to your own role takes effect on the screens you are already looking at — the
-Edit control on a use case un-greys without a re-login.
+Edit control on a use case un-greys, and the create-profile form unlocks, without a
+re-login.
 
 ### Redaction before ingestion — `aat_system/redaction.py`
 A document is redacted on its way into the repository, not after. `document_repo`
@@ -303,6 +314,7 @@ group on the login screen so they are never mistaken for real staff.
 | `GET /repository/documents`, `GET /repository/documents/{id}/download` | Folder contents and archived files |
 | `POST /token`, `POST /users`, `GET /users/me` | Auth and user management |
 | `POST /session/resolve`, `GET /roles`, `GET /admin/users`, `PATCH /admin/users/{id}` | Session role resolution and administration |
+| `POST /admin/users` | Create a profile (needs `manage_users`) |
 | `GET /permissions` | The role × permission matrix, live grants beside shipped defaults |
 | `PUT /permissions/{role}` | Replace what one role may do |
 | `POST /permissions/reset` | Put every role back to its shipped permissions |
@@ -320,8 +332,8 @@ group on the login screen so they are never mistaken for real staff.
 ### Frontend
 Single-page app in `static/` (`index.html`, `app.js`, `style.css`) — no build step. It
 implements the screens described under "Frontend Redesign" above: login/division,
-division dashboard, use case detail, reference and permissions, plus the two account views
-(profile and administration) reached from the header's user menu. The use case shell is written
+division dashboard, use case detail and reference in the main nav, plus settings (profiles
+and role permissions) and the personal profile page reached from the header's user menu. The use case shell is written
 once and reused for every use case; a new use case needs no new frontend code. Dark mode
 follows system preference and persists.
 
@@ -338,13 +350,14 @@ footer both say so up front, attaching a file returns 503 with an actionable mes
 a run with no attachment still works — it reports on what is already on file.
 
 ### Testing
-`python -m pytest tests/ -q` — 75 tests, no API key required and no model call made.
+`python -m pytest tests/ -q` — 80 tests, no API key required and no model call made.
 Coverage is on the definition seed/edit/reset cycle, revision history and rollback
 (including that a rollback is a new version and that the bad edit stays on the record),
 the required-document check, records and the approvals queue (`test_workflow_repo.py`),
 the run engine including that an edited definition changes what the run does
 (`test_workflow_runner.py`), and roles, folder scope, the roster including a test account
-per role, and runtime permission changes — that a granted permission reaches the profile
+per role, profile creation (email normalisation, duplicates, a default name and password),
+and runtime permission changes — that a granted permission reaches the profile
 the UI gates on, that a role stripped to nothing stays stripped, and that restoring
 defaults undoes everything (`test_access_control.py`).
 
@@ -364,11 +377,13 @@ Sample documents in `sample_docs/`:
 - UI login is simulated: any password is accepted and no token is issued. The username is
   resolved server-side to a real account, so the *role* is real even though the session is
   not; the authenticated endpoints are not exercised by the frontend.
-- The Permissions page is deliberately unguarded in this build: any signed-in account can
-  change what any role grants, so nobody can lock themselves out of a prototype they are
-  still shaping. The page says so on itself. Before this leaves localhost, gate
+- Settings → Role permissions is deliberately unguarded in this build: any signed-in
+  account can change what any role grants, so nobody can lock themselves out of a prototype
+  they are still shaping. The section says so on itself. Before this leaves localhost, gate
   `PUT /permissions/{role}` and `POST /permissions/reset` on `MANAGE_ROLES` — an account
-  that can widen its own permissions has, in effect, all of them.
+  that can widen its own permissions has, in effect, all of them. Creating and editing
+  profiles is already gated on `manage_users`, which is only meaningful once the
+  permissions endpoints are too.
 - The API endpoints and the frontend have no automated coverage; the backend logic does.
 - An existing `aat_system.db` keeps the now-unused `dar_reports`, `dar_incidents` and
   `workflow_sops` tables — `create_all` does not drop tables. Delete the file for a clean

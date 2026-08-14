@@ -43,6 +43,7 @@
     view: 'dashboard',
     changeLogFilter: '', // '' = every use case in the division
     permissions: null, // the role × permission matrix, as loaded
+    settingsSection: 'profiles', // which Settings section is open
   };
 
   const can = (permission) => !!(state.profile && state.profile.permissions.includes(permission));
@@ -145,7 +146,6 @@
     qs('.js-user-role').textContent = p.role_label;
     qs('.js-user-initials').textContent = initials(p.name);
     qs('.js-division-badge').textContent = divisionLabels[state.division] || p.division;
-    qs('#ud-admin').classList.toggle('hidden', !p.can_manage_users);
   }
 
   // ---------------- Login ----------------
@@ -281,8 +281,7 @@
 
     if (name === 'reference') loadReference();
     if (name === 'profile') renderProfile();
-    if (name === 'admin') loadAdmin();
-    if (name === 'permissions') loadPermissions();
+    if (name === 'settings') loadSettings();
   }
 
   qsa('.nav-tab').forEach((tab) => tab.addEventListener('click', () => switchView(tab.dataset.target)));
@@ -1430,24 +1429,158 @@
       </div>`;
   }
 
-  // ---------------- Admin ----------------
+  // ---------------- Settings: profiles and role permissions ----------------
 
-  async function loadAdmin() {
-    const body = qs('#admin-body');
-    body.innerHTML = '<div class="loading">Loading users…</div>';
+  qsa('.settings-tab').forEach((tab) =>
+    tab.addEventListener('click', () => showSettingsSection(tab.dataset.section))
+  );
+
+  function showSettingsSection(name) {
+    state.settingsSection = name;
+    qsa('.settings-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.section === name));
+    qsa('.settings-section').forEach((section) =>
+      section.classList.toggle('hidden', section.id !== 'settings-' + name)
+    );
+  }
+
+  async function loadSettings() {
+    showSettingsSection(state.settingsSection || 'profiles');
+    const roster = qs('#settings-roster');
+    roster.innerHTML = '<div class="loading">Loading profiles…</div>';
     try {
-      renderAdmin(await api('/admin/users'));
+      const [users, permissions] = await Promise.all([api('/admin/users'), api('/permissions')]);
+      state.permissions = permissions;
+      renderCreateProfile(users);
+      renderRoster(users);
+      renderPermissions();
     } catch (err) {
-      body.innerHTML = `<p class="empty">Could not load users: ${esc(err.message)}</p>`;
+      roster.innerHTML = `<p class="empty">Could not load settings: ${esc(err.message)}</p>`;
     }
   }
 
-  function renderAdmin(data) {
+  // ---- Create a profile: the account, its division, and the role it holds ----
+
+  function renderCreateProfile(data) {
     const canManage = state.profile.can_manage_users;
-    qs('#admin-body').innerHTML = `
-      ${canManage ? '' : '<p class="notice">Your role cannot change accounts. This page is read-only for you.</p>'}
+    const roleOptions = data.roles
+      .map(
+        (role) =>
+          `<option value="${esc(role.key)}" ${role.key === 'agent' ? 'selected' : ''}>${esc(
+            role.label
+          )}</option>`
+      )
+      .join('');
+
+    qs('#settings-create').innerHTML = `
       <section class="panel">
-        <div class="panel-head"><h2>Users</h2><span class="ws-count">${data.users.length}</span></div>
+        <div class="panel-head">
+          <div class="panel-head-title">
+            <h2>Create a profile</h2>
+            ${canManage ? '' : '<span class="pill pill-warn">Needs “Manage users”</span>'}
+          </div>
+        </div>
+        <p class="panel-hint">
+          The role decides what the account may do — set what that means under
+          <button type="button" class="link-btn" data-goto-permissions="1">Role permissions</button>.
+          ${
+            canManage
+              ? 'Any password works at sign-in; the username sets the access level.'
+              : 'Your role cannot create accounts. Grant it <strong>Manage users</strong> under Role permissions, then come back.'
+          }
+        </p>
+        <form class="create-form" id="create-profile-form">
+          <div class="field">
+            <label for="cp-name">Full name</label>
+            <input id="cp-name" placeholder="Jordan Blake" ${canManage ? '' : 'disabled'} />
+          </div>
+          <div class="field">
+            <label for="cp-email">Email</label>
+            <input id="cp-email" type="email" placeholder="jordan@aat.com" ${canManage ? '' : 'disabled'} />
+          </div>
+          <div class="field">
+            <label for="cp-division">Division</label>
+            <select id="cp-division" ${canManage ? '' : 'disabled'}>
+              <option value="mf">Residential / Multifamily</option>
+              <option value="retail">Office / Retail</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="cp-role">Role</label>
+            <select id="cp-role" ${canManage ? '' : 'disabled'}>${roleOptions}</select>
+          </div>
+          <div class="field field-wide">
+            <label for="cp-password">Password <span class="opt">(optional)</span></label>
+            <input id="cp-password" type="password" placeholder="Defaults to “prototype”" ${
+              canManage ? '' : 'disabled'
+            } />
+          </div>
+          <button type="submit" class="btn btn-primary" ${canManage ? '' : 'disabled'}>
+            ${icon('i-plus')} Create profile
+          </button>
+        </form>
+        <div class="cp-grants" id="cp-grants"></div>
+      </section>`;
+
+    const showGrants = () => {
+      const role = data.roles.find((r) => r.key === qs('#cp-role').value);
+      if (!role) return;
+      qs('#cp-grants').innerHTML = `
+        <p class="cp-grants-head">${esc(role.label)} — ${esc(role.description)}</p>
+        <ul class="perm-list inline">
+          ${data.permissions
+            .map((perm) => {
+              const granted = role.permissions.includes(perm.key);
+              return `<li class="${granted ? 'granted' : 'denied'}">${icon(
+                granted ? 'i-check' : 'i-x'
+              )} ${esc(perm.label)}</li>`;
+            })
+            .join('')}
+        </ul>`;
+    };
+    showGrants();
+    qs('#cp-role').addEventListener('change', showGrants);
+    qs('#settings-create [data-goto-permissions]').addEventListener('click', () =>
+      showSettingsSection('permissions')
+    );
+    qs('#create-profile-form').addEventListener('submit', createProfile);
+  }
+
+  async function createProfile(event) {
+    event.preventDefault();
+    const email = qs('#cp-email').value.trim();
+    if (!email) return toast('An email address is required.', 'error');
+
+    try {
+      const created = await api(
+        '/admin/users',
+        jsonBody({
+          name: qs('#cp-name').value.trim(),
+          email: email,
+          division: qs('#cp-division').value,
+          role: qs('#cp-role').value,
+          password: qs('#cp-password').value,
+          acting_user_id: state.profile.id,
+        })
+      );
+      toast(`${created.user.name} added as ${created.user.role_label}.`, 'ok');
+      await loadSettings();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  // ---- The roster ----
+
+  function renderRoster(data) {
+    const canManage = state.profile.can_manage_users;
+    qs('#settings-roster').innerHTML = `
+      ${
+        canManage
+          ? ''
+          : '<p class="notice">Your role cannot change accounts, so the roster below is read-only.</p>'
+      }
+      <section class="panel">
+        <div class="panel-head"><h2>Profiles</h2><span class="ws-count">${data.users.length}</span></div>
         <div class="table-scroll">
           <table class="data-table">
             <thead><tr><th>Name</th><th>Email</th><th>Division</th><th>Role</th><th>Active</th></tr></thead>
@@ -1482,30 +1615,11 @@
             </tbody>
           </table>
         </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head"><h2>What each role grants</h2></div>
-        <div class="role-grid">
-          ${data.roles
-            .map(
-              (role) => `
-            <div class="role-card">
-              <h4>${esc(role.label)} <span>level ${role.level}</span></h4>
-              <p>${esc(role.description)}</p>
-              <ul>${role.permissions
-                .map((key) => {
-                  const perm = data.permissions.find((p) => p.key === key);
-                  return `<li>${icon('i-check')} ${esc(perm ? perm.label : key)}</li>`;
-                })
-                .join('')}</ul>
-            </div>`
-            )
-            .join('')}
-        </div>
       </section>`;
 
-    qsa('#admin-body [data-field]').forEach((input) =>
+    // What each role grants is not repeated here — that is the Role permissions
+    // section, where it is editable rather than merely listed.
+    qsa('#settings-roster [data-field]').forEach((input) =>
       input.addEventListener('change', () => {
         const userId = input.closest('[data-user]').dataset.user;
         const field = input.dataset.field;
@@ -1521,26 +1635,18 @@
         jsonBody(Object.assign({ acting_user_id: state.profile.id }, changes), 'PATCH')
       );
       toast('Account updated.', 'ok');
-      loadAdmin();
+      // The acting account may have changed its own reach, and the roster's
+      // role menus feed the create form's grant preview.
+      if (String(state.profile.id) === String(userId)) await resolveProfile(state.profile.email, state.division);
+      renderIdentity();
+      loadSettings();
     } catch (err) {
       toast(err.message, 'error');
-      loadAdmin();
+      loadSettings();
     }
   }
 
-  // ---------------- Permissions ----------------
-
-  async function loadPermissions() {
-    const body = qs('#permissions-body');
-    body.innerHTML = '<div class="loading">Loading permissions…</div>';
-    try {
-      state.permissions = await api('/permissions');
-    } catch (err) {
-      body.innerHTML = `<p class="empty">Could not load permissions: ${esc(err.message)}</p>`;
-      return;
-    }
-    renderPermissions();
-  }
+  // ---- Role permissions: what each role may do ----
 
   function renderPermissions() {
     const data = state.permissions;
@@ -1550,7 +1656,7 @@
     qs('#permissions-body').innerHTML = `
       <p class="notice notice-info">
         Prototype build — any signed-in account can change these, so you are never locked out of
-        your own system. In production this page belongs behind <strong>Assign roles</strong>.
+        your own system. In production this section belongs behind <strong>Assign roles</strong>.
       </p>
 
       <section class="panel">
@@ -1571,9 +1677,10 @@
           </div>
         </div>
         <p class="panel-hint">
-          Tick a box to grant that role the capability. Your own role is highlighted — granting
-          yourself <strong>Edit workflow definitions</strong> is what un-greys the Edit control on a
-          use case.
+          Tick a box to grant that role the capability — this is what a profile's role means, so it
+          decides what every account holding it may do. Your own role is highlighted: granting it
+          <strong>Edit workflow definitions</strong> is what un-greys the Edit control on a use case,
+          and <strong>Manage users</strong> is what lets you create profiles.
         </p>
         <div class="table-scroll">
           <table class="data-table perm-matrix">
@@ -1653,7 +1760,7 @@
       );
     } catch (err) {
       toast(err.message, 'error');
-      loadPermissions();
+      loadSettings();
     }
   }
 
@@ -1672,7 +1779,9 @@
   async function afterPermissionChange(message) {
     if (state.profile) await resolveProfile(state.profile.email, state.division);
     renderIdentity();
-    renderPermissions();
+    // Re-render the whole page: what a role grants drives the create form's
+    // preview and whether the roster is editable, not only the matrix.
+    await loadSettings();
     if (state.workflow) renderNarrative();
     toast(message, 'ok');
   }

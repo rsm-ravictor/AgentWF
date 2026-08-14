@@ -162,6 +162,55 @@ def test_there_is_a_test_account_for_every_role(db):
     assert all(a["email"].startswith("test.") for a in test_accounts)
 
 
+def test_creating_a_profile_puts_it_on_the_roster_with_its_role(db):
+    created = user_repo.create_account(
+        db, email="New.Person@AAT.com", name="New Person", division=Division.OFFICE, role=Role.REVIEWER
+    )
+
+    assert created.email == "new.person@aat.com"  # normalised, so logins match
+    assert created.role == Role.REVIEWER
+    assert created.is_active is True
+
+    profile = user_repo.profile(created, db)
+    assert profile["can_approve"] is True
+    assert profile["can_edit_workflow"] is False
+    assert profile["division_key"] == "retail"
+
+
+def test_a_profile_created_without_a_name_gets_one_from_its_email(db):
+    created = user_repo.create_account(
+        db, email="dana.cole@aat.com", name="  ", division=Division.MULTIFAMILY, role=Role.AGENT
+    )
+    assert created.name == "Dana Cole"
+
+
+def test_a_profile_created_without_a_password_can_still_sign_in(db):
+    from aat_system.security import verify_password
+
+    created = user_repo.create_account(
+        db, email="nopass@aat.com", name="No Pass", division=Division.MULTIFAMILY, role=Role.AGENT
+    )
+    assert created.hashed_password
+    assert verify_password(user_repo.DEFAULT_PASSWORD, created.hashed_password)
+
+
+def test_a_duplicate_email_is_refused(db):
+    user_repo.create_account(
+        db, email="dup@aat.com", name="First", division=Division.MULTIFAMILY, role=Role.AGENT
+    )
+    with pytest.raises(ValueError):
+        user_repo.create_account(
+            db, email="dup@aat.com", name="Second", division=Division.MULTIFAMILY, role=Role.AGENT
+        )
+
+
+def test_an_invalid_email_is_refused(db):
+    with pytest.raises(ValueError):
+        user_repo.create_account(
+            db, email="not-an-email", name="X", division=Division.MULTIFAMILY, role=Role.AGENT
+        )
+
+
 def test_seeding_the_roster_twice_creates_no_duplicates(db):
     first = user_repo.seed_roster(db)
     assert first == len(user_repo.DEFAULT_ROSTER)

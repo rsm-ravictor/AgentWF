@@ -22,8 +22,9 @@ The screens, in the order a user meets them:
 4. **Reference** — a rollup of every use case in the division, the change log of
    workflow definitions (every version, what changed, and a roll-back action), and
    the shared vocabulary their narratives are written against.
-5. **Permissions** — the role × permission matrix, editable in place. Roles are
-   fixed in code; what a role grants is data, and every gate in the app reads it.
+5. **Settings** (user menu) — accounts and access together: create a profile with
+   the role it holds, manage the roster, and set what every role is allowed to do.
+   Roles are fixed in code; what a role grants is data, and every gate reads it.
 
 The use case shell is built once and reused. What differs per use case is only
 its definition, so adding one takes no new frontend code.
@@ -88,9 +89,9 @@ provisioned as an Agent.
 
 Editing a workflow definition needs `edit_workflow`, which by default only
 Division head, Administrator and Super user hold. Two ways past a disabled
-**Edit** button: sign in as one of those, or open **Permissions** and grant the
-capability to the role you are using — that page writes what the app actually
-gates on, and your session picks the change up immediately.
+**Edit** button: sign in as one of those, or open **Settings → Role permissions**
+and grant the capability to the role you are using — that section writes what the
+app actually gates on, and your session picks the change up immediately.
 
 Without an API key the app still runs: a run with no attachment reports on what
 is already on file, and the UI says up front that grading is unavailable.

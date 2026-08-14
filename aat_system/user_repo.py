@@ -104,6 +104,40 @@ def resolve_session_user(db: Session, email: str, division: Division, name: str 
     return user
 
 
+def create_account(
+    db: Session,
+    email: str,
+    name: str,
+    division: Division,
+    role: Role,
+    password: str = "",
+) -> User:
+    """Add an account to the roster.
+
+    The password is optional because the preview UI issues no tokens — an account
+    created here is signed into by username alone. It is still hashed and stored
+    so the real `/token` flow works against these accounts unchanged.
+    """
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        raise ValueError("A valid email address is required.")
+    if db.query(User).filter(User.email == email).first():
+        raise ValueError(f"An account for {email} already exists.")
+
+    user = User(
+        email=email,
+        name=(name or "").strip() or email.split("@")[0].replace(".", " ").title(),
+        division=division,
+        role=role,
+        hashed_password=get_password_hash(password or DEFAULT_PASSWORD),
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def profile(user: User, db: Optional[Session] = None) -> dict:
     """Everything the Profile page shows about one account.
 
