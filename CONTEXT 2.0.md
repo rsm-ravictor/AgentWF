@@ -371,19 +371,21 @@ belonging to the division picked above it.
 > path to a verdict rather than two that can diverge. `/phase2/email-ingestion` is gone —
 > Phase 2 ingestion is not built, and a placeholder endpoint said otherwise.
 
-### Visual design — quiet monochrome, tuned to the corporate site
-The whole app is one restrained aesthetic: hairline rules and whitespace instead of
-cards, flat surfaces, square corners, thin-line monochrome icons.
+### Visual design — corporate, structured, institutional
+Styled to sit beside **americanassetstrust.com**: white page, navy brand, panels with
+real borders and a slight lift, a substantial top nav bar, and a clear hierarchy of
+bold headers over regular body text. Structured rows and columns rather than airy
+asymmetry; sections carry visible boundaries, not only whitespace. Corners are
+slightly rounded (6px), never pill-shaped. Primary actions are a solid navy fill with
+white text, secondary actions an outlined navy. The typeface is the corporate site's
+own stack — `"Open Sans", "Helvetica Neue", Helvetica` — with no webfont loaded, since
+this runs locally.
 
-The palette is taken from **americanassetstrust.com**, so this reads as the same
-organisation's internal tool rather than a separate product: their slate ink
-(`#222A32`) is the text colour, their azure/teal (`#2498E3`, `#09729F`) becomes a
-deeper, quieter accent (`#0F6E97`) — an internal tool people look at all day should
-not carry marketing contrast — and their `"Open Sans", "Helvetica Neue", Helvetica`
-stack is used verbatim, with no webfont loaded since this runs locally. Light is a
-cool off-white (`#F7F8F9`); dark takes the same slate all the way down (`#14171A`,
-never pure black) with the accent dimmed to `#6FA8C9` so it does not glow. The same
-design inverted, not a second design language.
+Light is white (`#FFFFFF`) with near-black text (`#1A1A1A`), `#5A5F66` for secondary
+text, `#E0E2E5` dividers and a `#1B2A4A` navy brand behind one steel-blue accent for
+links and active states. Dark is a deep navy charcoal (`#12161F`, never pure black)
+with `#F2F3F5` text, `#9BA1AA` secondary, `#2A2E38` dividers, and the navy lifted to
+`#33507F` so it holds against the dark page.
 
 Every colour is a token at the top of `style.css`, defined once in three blocks: the
 light `:root`, a `prefers-color-scheme: dark` block guarded by
@@ -398,17 +400,40 @@ Dark mode follows the system by default: with no stored choice the app writes no
 system as it changes. The toggle stores a preference only once someone actually
 uses it.
 
-Held to throughout: one sans family, light weight body, uppercase wide-tracked
-labels and section headers, a three-size type scale, flat surfaces (no shadows or
-gradients), square corners, buttons as a word inside a hairline rather than a filled
-pill, and thin-line monochrome icons — stroke width is overridden in CSS so every
-symbol matches and icons only invert between modes. Headlines stay sentence case, as
-they are on the corporate site; the uppercase treatment is reserved for labels.
+Nav items, section headers and field labels take uppercase with slight tracking for a
+structured feel; headlines stay sentence case. Icons are one consistent line style in
+navy or grey throughout.
 
-The deliberate exception is **live run status**. Running / done / needs review carry
-the accent (or primary text for done) clearly enough to read at a glance, because a
-run's state is the one thing minimalism must not hide. Step kinds, formerly six
-hues, are now a tonal ramp read together with their uppercase labels.
+**Status follows dashboard convention** everywhere outside the diagrams: navy for in
+progress, green for complete, amber for needs review — each a filled wash with a
+matching border, so state is scannable rather than decorative.
+
+### The workflow diagram
+Colour marks a step's **position in the sequence**, not its type. Six muted tones —
+navy, steel blue, teal, muted gold, muted plum, warm gray — walked in order and
+cycled when a workflow has more steps, so a diagram stays countable at a glance and
+calm even at six colours. Connectors stay neutral grey, so the eye follows the
+colour-coded nodes rather than the lines.
+
+Two signals **layer on top** of a node's colour rather than replacing it, which is
+what keeps a step recognisable mid-run:
+
+- **Needs a person** — an amber outline and corner marker on any `human` step. Amber
+  is reserved for this meaning and never appears in the sequence palette.
+- **Run status** — a ring around the node: navy in progress, green complete, amber
+  needs review, with a matching label inside it.
+
+A `decision` step keeps its sequence colour and takes a distinct shape (cut corners
+plus a diamond marker). Deliberately not `clip-path`, which would clip the status
+ring off a decision step mid-run.
+
+Label ink is **computed per node** in `app.js` from each fill's WCAG luminance, so a
+light fill gets near-black text and a dark fill white — retoning a `--seq-*` token in
+CSS cannot leave a label unreadable. The inks are recomputed whenever the theme
+changes, including when the system flips it with no click involved. The narrative
+panel, the reference rollup and the change log reuse the same sequence colours, so
+section N is visibly node N, and the enlarge overlay is the same diagram at a larger
+scale.
 
 ### Frontend
 Single-page app in `static/` (`index.html`, `app.js`, `style.css`) — no build step. It

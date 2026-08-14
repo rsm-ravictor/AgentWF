@@ -141,7 +141,24 @@
 
   qs('#theme-toggle').addEventListener('click', () => {
     applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+    // The step fills differ between modes, so the label inks computed from them
+    // are stale the moment the theme flips.
+    repaintForTheme();
   });
+
+  // Following the system means the fills can change without anyone clicking.
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (!document.documentElement.dataset.theme) repaintForTheme();
+  });
+
+  function repaintForTheme() {
+    resetInkCache();
+    if (state.workflow) {
+      renderDiagram();
+      renderNarrative();
+    }
+    if (state.reference && state.view === 'reference') renderReference();
+  }
 
   // ---------------- Session ----------------
 
@@ -640,14 +657,75 @@
 
   // ---- The diagram: one node per step, coloured by kind ----
 
+  // ---- Step colour: position in the sequence, not step type ----
+  //
+  // Colour is what makes a diagram countable at a glance, so it tracks the
+  // sequence and cycles when a workflow has more steps than the palette. Step
+  // *meaning* is carried by two layers that sit on top without replacing the
+  // colour: an amber outline where a person is needed, and a run-status ring
+  // once execution starts.
+  const SEQ_COLOURS = 6;
+
+  // Which label colour a fill can carry. Computed from the fill's own luminance
+  // rather than fixed, so retoning a token in CSS cannot leave text unreadable.
+  const inkCache = {};
+
+  function nodeInk(index) {
+    const slot = index % SEQ_COLOURS;
+    if (inkCache[slot]) return inkCache[slot];
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--seq-' + slot).trim();
+    const rgb = parseColour(raw);
+    if (!rgb) return (inkCache[slot] = { ink: '#ffffff', dark: false });
+    // Relative luminance, WCAG's formula.
+    const channel = (c) => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    };
+    const L = 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+    const dark = L > 0.45; // a light fill needs dark text
+    return (inkCache[slot] = { ink: dark ? '#1a1a1a' : '#ffffff', dark: dark });
+  }
+
+  function parseColour(value) {
+    const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const h = hex[1].length === 3 ? hex[1].replace(/./g, (c) => c + c) : hex[1];
+      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    }
+    const rgb = value.match(/rgba?\(([^)]+)\)/);
+    if (rgb) return rgb[1].split(',').slice(0, 3).map((n) => parseFloat(n));
+    return null;
+  }
+
+  // The theme changes what the fills are, so the computed inks have to go with it.
+  function resetInkCache() {
+    Object.keys(inkCache).forEach((k) => delete inkCache[k]);
+  }
+
+  function stepClasses(step, index) {
+    const ink = nodeInk(index);
+    return [
+      'seq-' + (index % SEQ_COLOURS),
+      ink.dark ? 'ink-dark' : '',
+      step.kind === 'human' ? 'needs-human' : '',
+      step.kind === 'decision' ? 'is-decision' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
   function diagramHtml(steps, isDraft) {
     return steps
       .map((step, index) => {
         // A draft step has no key yet — it has not been saved — so it carries no
         // run status either. Nothing to look up until it exists server-side.
         const status = (!isDraft && state.runStatuses[step.key]) || '';
+        const ink = nodeInk(index);
+        const human = step.kind === 'human' ? ' — needs a person' : '';
         return `
-        <div class="node kind-${esc(step.kind)} ${status}" data-key="${esc(step.key || 'draft-' + index)}" title="${esc(step.summary)}">
+        <div class="node ${stepClasses(step, index)} ${status}" style="--node-ink:${ink.ink}"
+          data-key="${esc(step.key || 'draft-' + index)}"
+          title="${esc(step.summary)}${human}">
           <div class="node-top">
             <span class="node-index">${index + 1}</span>
             <span class="node-kind">${esc(KINDS[step.kind] || 'Step')}</span>
@@ -660,14 +738,22 @@
       .join('<div class="connector" aria-hidden="true"></div>');
   }
 
+  // The legend answers the two questions the colours cannot: which number is
+  // which step, and what the amber outline means.
   function legendHtml(steps) {
-    const used = [];
-    steps.forEach((s) => {
-      if (!used.includes(s.kind)) used.push(s.kind);
-    });
-    return used
-      .map((kind) => `<span class="legend-item kind-${esc(kind)}">${esc(KINDS[kind] || kind)}</span>`)
+    const items = steps
+      .map(
+        (step, index) =>
+          `<span class="legend-item legend-seq-${index % SEQ_COLOURS}">${index + 1}. ${esc(
+            (step.title || '').trim() || 'Untitled step'
+          )}</span>`
+      )
       .join('');
+    const needsHuman = steps.some((s) => s.kind === 'human');
+    return (
+      items +
+      (needsHuman ? '<span class="legend-item legend-human">Needs a person</span>' : '')
+    );
   }
 
   // While the narrative is being edited the diagram draws the draft, not the
@@ -747,12 +833,16 @@
   }
 
   function narrativeViewHtml(step, index) {
+    // Same sequence colour as the node it describes, so section N and node N are
+    // visibly one thing.
     return `
-      <article class="narr-step kind-${esc(step.kind)}" data-key="${esc(step.key)}">
+      <article class="narr-step ${stepClasses(step, index)}" data-key="${esc(step.key)}">
         <header>
           <span class="narr-index">${index + 1}</span>
           <h3>${esc(step.title)}</h3>
-          <span class="narr-kind">${esc(KINDS[step.kind] || 'Step')}</span>
+          <span class="narr-kind">${esc(KINDS[step.kind] || 'Step')}${
+            step.kind === 'human' ? ' · needs a person' : ''
+          }</span>
         </header>
         ${step.summary ? `<p class="narr-summary">${esc(step.summary)}</p>` : ''}
         ${step.bullets.length ? `<ul>${step.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
@@ -761,7 +851,7 @@
 
   function narrativeEditHtml(step, index) {
     return `
-      <article class="narr-step narr-edit kind-${esc(step.kind)}" data-index="${index}">
+      <article class="narr-step narr-edit ${stepClasses(step, index)}" data-index="${index}">
         <header>
           <span class="narr-index">${index + 1}</span>
           <input class="ne-title" value="${esc(step.title)}" placeholder="Step name" aria-label="Step name" />
@@ -812,12 +902,15 @@
       field.addEventListener('input', previewDraft)
     );
 
-    // The colour strip follows the type as soon as it is changed, so the edit
-    // panel shows the same coding the diagram just took on.
+    // Changing the type cannot change the step's sequence colour — that follows
+    // position — but it can change whether the step needs a person, so the
+    // marker is recomputed here as well as in the diagram.
     qsa('#uc-narrative .ne-kind').forEach((select) =>
       select.addEventListener('change', () => {
         const article = select.closest('.narr-step');
-        article.className = 'narr-step narr-edit kind-' + select.value;
+        const index = Number(article.dataset.index);
+        article.className =
+          'narr-step narr-edit ' + stepClasses({ kind: select.value }, index);
         previewDraft();
       })
     );
@@ -1242,8 +1335,8 @@
           <ol class="ref-steps">
             ${uc.steps
               .map(
-                (step) => `
-              <li class="kind-${esc(step.kind)}">
+                (step, index) => `
+              <li class="${stepClasses(step, index)}">
                 <strong>${esc(step.title)}</strong>
                 <span>${esc(step.summary)}</span>
               </li>`
@@ -1271,7 +1364,7 @@
     qs('#ref-kinds').innerHTML = Object.entries(data.step_kinds)
       .map(
         ([key, description]) => `
-        <div class="kind-card kind-${esc(key)}">
+        <div class="kind-card">
           <h4>${esc(KINDS[key] || key)}</h4>
           <p>${esc(description)}</p>
         </div>`
@@ -1354,8 +1447,8 @@
             <ol>
               ${entry.steps
                 .map(
-                  (s) =>
-                    `<li class="kind-${esc(s.kind)}"><strong>${esc(s.title)}</strong>
+                  (s, index) =>
+                    `<li class="${stepClasses(s, index)}"><strong>${esc(s.title)}</strong>
                       <span>${esc(KINDS[s.kind] || s.kind)}</span></li>`
                 )
                 .join('')}

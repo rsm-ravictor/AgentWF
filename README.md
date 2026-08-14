@@ -93,12 +93,18 @@ does when it reaches it:
 
 ## Look and feel
 
-Quiet and restrained, and deliberately complementary to
-[americanassetstrust.com](https://www.americanassetstrust.com/): their slate ink
-`#222A32`, a deeper and quieter version of their azure `#0F6E97`, cool grey
-neutrals, and their `"Open Sans", "Helvetica Neue"` stack. Hairline rules and
-whitespace rather than cards, flat surfaces, square corners, thin-line monochrome
-icons, and uppercase wide-tracked labels over a light-weight sans.
+Corporate and structured, to sit beside
+[americanassetstrust.com](https://www.americanassetstrust.com/): white page, navy
+`#1B2A4A` brand, bordered panels with a slight lift, a substantial top nav, bold
+headers over regular body text, and their `"Open Sans", "Helvetica Neue"` stack.
+Dark mode is a deep navy charcoal `#12161F`, never pure black.
+
+Status follows dashboard convention — navy in progress, green complete, amber
+needs review. In the **workflow diagrams**, colour marks a step's position in the
+sequence (six muted tones, cycled), connectors stay neutral, and two signals layer
+on top without changing a node's colour: an amber outline where a person is needed,
+and a status ring once a run is live. Label ink is computed per node from the fill's
+luminance, so text stays readable in both modes.
 
 Every colour is a design token at the top of `style.css` — nothing is styled
 per screen. Light and dark are the same design inverted; dark follows the system
