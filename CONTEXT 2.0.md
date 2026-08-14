@@ -151,11 +151,16 @@ sections below it are per division.
 - **Role permissions** — the level × permission matrix for the chosen division, editable in
   place, with a restore-defaults action.
 
-Settings is reachable at every level. Editing profiles needs `manage_users` and the create
-form says so, but the permission that would grant it is a checkbox in the next section
-along — so a gate is something to open deliberately rather than a dead end. Administering
-another division's people needs `view_all_divisions`, which the server enforces on both
-creating and editing accounts.
+Settings is reachable at every level. Creating and editing profiles needs `manage_users`,
+which a general user does not hold — and since any email off the roster is provisioned as
+a general user, that would otherwise be a dead end on the very screen meant to fix it. The
+disabled form therefore carries **Give my level this**: one click grants `manage_users` to
+the signed-in level in its own division, re-resolves the session, and unlocks the form in
+place. The gate stays real — the server still refuses without the permission — it just
+stops being a wall in a build whose permissions are open anyway.
+
+Administering another division's people needs `view_all_divisions`, which the server
+enforces on both creating and editing accounts.
 
 **Profile & access** (user menu) stays separate as the read-only personal page: what this
 account may do and where those limits come from.

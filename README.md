@@ -115,6 +115,11 @@ Each also has a test account under its own heading — `test.super.construction@
 and so on, one per level per division. Any other email is provisioned as a General
 user in the division being signed into.
 
+**Creating a profile** is in Settings → Profiles. It needs `manage_users`, which only
+Admin and Super admin hold by default — if the form is disabled, the **Give my level
+this** button beside it grants the permission to your own level and unlocks the form
+on the spot.
+
 Editing a workflow definition needs `edit_workflow`, which by default only Admin and
 Super admin hold. Two ways past a disabled **Edit** button: sign in at one of those
 levels, or open **Settings → Role permissions**, pick the division, and grant the

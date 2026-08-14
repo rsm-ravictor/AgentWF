@@ -1524,6 +1524,13 @@
             <h2>Create a profile</h2>
             ${canManage ? '' : '<span class="pill pill-warn">Needs “Manage users”</span>'}
           </div>
+          ${
+            canManage
+              ? ''
+              : `<button class="btn btn-secondary btn-sm" id="cp-unlock">
+                   ${icon('i-check')} Give my level this
+                 </button>`
+          }
         </div>
         <p class="panel-hint">
           The level decides what the account may do <em>in this division</em> — set what that means
@@ -1532,7 +1539,11 @@
           ${
             canManage
               ? 'Any password works at sign-in; the username sets the access level.'
-              : 'Your level cannot create accounts. Grant it <strong>Manage users</strong> under Role permissions, then come back.'
+              : `Creating accounts needs <strong>Manage users</strong>, which ${esc(
+                  state.profile.role_label
+                )} does not hold in ${esc(
+                  divisionLabels[state.profile.division_key] || 'your division'
+                )}. Grant it to yourself above, or sign in as a super admin.`
           }
         </p>
         <form class="create-form" id="create-profile-form">
@@ -1596,6 +1607,38 @@
       showSettingsSection('permissions')
     );
     qs('#create-profile-form').addEventListener('submit', createProfile);
+    const unlock = qs('#cp-unlock');
+    if (unlock) unlock.addEventListener('click', grantMyselfUserManagement);
+  }
+
+  // The gate is real — the server refuses without it — but it should never be a
+  // dead end in a build whose permissions are open anyway. One click grants the
+  // signed-in level "Manage users" in its own division and reloads the session.
+  async function grantMyselfUserManagement() {
+    const me = state.profile;
+    const button = qs('#cp-unlock');
+    button.disabled = true;
+    try {
+      // Base this on the profile's own permission list, not the matrix on
+      // screen: Settings may be showing a different division's levels.
+      const granted = me.permissions.slice();
+      if (!granted.includes('manage_users')) granted.push('manage_users');
+
+      await api(
+        `/permissions/${encodeURIComponent(me.role)}`,
+        jsonBody(
+          { division: me.division_key, permissions: granted, updated_by: me.name },
+          'PUT'
+        )
+      );
+      await resolveProfile(me.email, state.division);
+      renderIdentity();
+      await loadSettings();
+      toast(`${me.role_label} can now create profiles in ${divisionLabels[me.division_key]}.`, 'ok');
+    } catch (err) {
+      toast(err.message, 'error');
+      button.disabled = false;
+    }
   }
 
   async function createProfile(event) {
@@ -1630,7 +1673,8 @@
       ${
         canManage
           ? ''
-          : '<p class="notice">Your role cannot change accounts, so the roster below is read-only.</p>'
+          : `<p class="notice">${esc(state.profile.role_label)} cannot change accounts, so the
+             roster below is read-only. The button above grants it that.</p>`
       }
       <section class="panel">
         <div class="panel-head"><h2>Profiles</h2><span class="ws-count">${data.users.length}</span></div>
