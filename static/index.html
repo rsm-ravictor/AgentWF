@@ -211,6 +211,8 @@
           <div class="uc-head-meta">
             <span class="chip" id="uc-folder-chip"></span>
             <span class="chip chip-quiet" id="uc-updated"></span>
+            <!-- Jumps to this workflow's history in the Reference change log -->
+            <button type="button" class="chip chip-btn" id="uc-version"></button>
           </div>
         </header>
 
@@ -339,6 +341,20 @@
           <p>One row per use case — what it does, where it reads from, and where it stands</p>
         </div>
         <div id="ref-rollup"></div>
+
+        <!-- Definition history: the way back if a change broke a workflow -->
+        <div class="section-heading">
+          <h2>Workflow change log</h2>
+          <div class="sh-actions">
+            <p>Every version of every workflow in this division — what changed, who changed it,
+              and the version to go back to</p>
+            <div class="field cl-filter">
+              <label for="changelog-filter" class="sr-only">Filter by use case</label>
+              <select id="changelog-filter"><option value="">All use cases</option></select>
+            </div>
+          </div>
+        </div>
+        <div class="changelog" id="ref-changelog"></div>
 
         <div class="section-heading">
           <h2>Step types</h2>

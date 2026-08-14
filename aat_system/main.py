@@ -341,6 +341,7 @@ def workflow_detail(workflow_id: str, division: str = "mf", db: Session = Depend
     rubric = llm_analyzer.WORKFLOW_RUBRICS.get(workflow_id, {})
     return {
         "definition": workflow_repo.get_definition(db, workflow_id, div),
+        "version": workflow_repo.current_version(db, workflow_id, div),
         "approvals": approval_repo.list_pending(db, div, workflow_id=workflow_id),
         "records": workflow_repo.record_summary(db, workflow_id, div),
         "record_rows": workflow_repo.list_records(db, workflow_id, div, limit=25),
@@ -493,7 +494,50 @@ def reference(division: str = "mf", db: Session = Depends(get_db)):
         "glossary": workflow_repo.GLOSSARY,
         "step_kinds": workflow_repo.STEP_KINDS,
         "folders": CORE_FOLDERS,
+        # Division-wide definition history: what changed, when, by whom, and the
+        # version to roll back to if a change broke something.
+        "change_log": workflow_repo.change_log(db, div),
+        "revision_sources": workflow_repo.REVISION_SOURCES,
     }
+
+
+@app.get("/workflows/{workflow_id}/history")
+def workflow_history(workflow_id: str, division: str = "mf", db: Session = Depends(get_db)):
+    """Every version this workflow's definition has had, newest first."""
+    if workflow_id not in workflow_repo.WORKFLOW_CATALOG:
+        raise HTTPException(status_code=404, detail=f"Unknown workflow '{workflow_id}'")
+    div = resolve_division(division)
+    workflow_repo.get_definition(db, workflow_id, div)  # seeds version 1 on first look
+    return {
+        "workflow_id": workflow_id,
+        "title": workflow_repo.WORKFLOW_CATALOG[workflow_id]["title"],
+        "current_version": workflow_repo.current_version(db, workflow_id, div),
+        "revisions": workflow_repo.list_revisions(db, workflow_id, div),
+    }
+
+
+@app.post("/workflows/{workflow_id}/revisions/{version}/restore")
+def restore_workflow_revision(
+    workflow_id: str,
+    version: int,
+    payload: DefinitionUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Put a past version of a definition back as the live one.
+
+    The rollback is recorded as a new version rather than a rewind, so the
+    history stays complete and a rollback can itself be rolled back.
+    """
+    try:
+        return workflow_repo.restore_revision(
+            db,
+            workflow_id,
+            resolve_division(payload.division),
+            version,
+            updated_by=payload.updated_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 # ---------------- Approvals ----------------

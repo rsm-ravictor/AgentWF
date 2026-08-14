@@ -19,8 +19,9 @@ Four screens, in the order a user meets them:
    fixed layout: the workflow diagram on the left (2/3, with an enlarge overlay),
    the written walkthrough on the right (1/3, editable — the diagram redraws from
    your edits as you type), and a run footer with a live status bar and the outcome.
-4. **Reference** — a rollup of every use case in the division, and the shared
-   vocabulary their narratives are written against.
+4. **Reference** — a rollup of every use case in the division, the change log of
+   workflow definitions (every version, what changed, and a roll-back action), and
+   the shared vocabulary their narratives are written against.
 
 The use case shell is built once and reused. What differs per use case is only
 its definition, so adding one takes no new frontend code.
@@ -29,8 +30,14 @@ its definition, so adding one takes no new frontend code.
 
 A workflow definition is an ordered list of steps (`workflow_steps`). The
 diagram, the narrative, and the run all render from those same rows, and editing
-the narrative rewrites them. That is what stops the picture, the words and the
-execution drifting into three different answers.
+the narrative rewrites them — the diagram follows your edits as you type. That is
+what stops the picture, the words and the execution drifting into three different
+answers.
+
+Because that definition is also what a run executes, every version of it is kept
+in `workflow_revisions`: the Reference page lists what changed, who changed it and
+when, and rolls any past version back as the live one. A rollback is recorded as a
+new version, not a rewind, so it can be undone too.
 
 Each step carries a `kind`, which colours its node and decides what the runner
 does when it reaches it:
@@ -47,8 +54,8 @@ does when it reaches it:
 ## Modules
 
 - `aat_system/config.py` — divisions, roles, permissions, folder names, paths.
-- `aat_system/models.py` — users, folders, documents, leases, approvals, workflow steps and records.
-- `aat_system/workflow_repo.py` — the use case catalog, definitions, required documents, records, glossary.
+- `aat_system/models.py` — users, folders, documents, leases, approvals, workflow steps, revisions and records.
+- `aat_system/workflow_repo.py` — the use case catalog, definitions, revision history, required documents, records, glossary.
 - `aat_system/workflow_runner.py` — executes a use case step by step, yielding one event per state change.
 - `aat_system/llm_analyzer.py` — per-workflow rubrics and the structured-output call to Claude.
 - `aat_system/approval_repo.py` — the human-in-the-loop queue.

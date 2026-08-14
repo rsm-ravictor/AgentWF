@@ -151,6 +151,8 @@ textarea { resize: vertical; font-family: inherit; }
   background: var(--accent-soft); color: var(--accent-text);
 }
 .chip-quiet { background: var(--bg-sunken); color: var(--text-soft); }
+.chip-btn { border: none; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 550; }
+.chip-btn:hover { filter: brightness(1.06); }
 
 .empty, .loading { color: var(--text-faint); font-size: 14px; padding: 14px 0; }
 .notice {
@@ -668,6 +670,36 @@ textarea { resize: vertical; font-family: inherit; }
 .ref-rubric ul { margin-top: 9px; display: flex; flex-direction: column; gap: 5px; }
 .ref-rubric li { font-size: 12.5px; color: var(--text-soft); padding-left: 14px; position: relative; }
 .ref-rubric li::before { content: '·'; position: absolute; left: 4px; }
+
+/* ---- Change log: definition history and the way back ---- */
+
+.cl-filter { min-width: 190px; }
+.cl-filter select { padding: 6px 10px; font-size: 12.5px; }
+.changelog { display: flex; flex-direction: column; gap: 10px; }
+.cl-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong); border-radius: var(--radius); padding: 14px 16px;
+}
+.cl-row.current { border-left-color: var(--ok); }
+.cl-main { min-width: 0; }
+.cl-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.cl-version {
+  font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12px;
+  background: var(--bg-sunken); color: var(--text-soft); padding: 2px 8px; border-radius: 6px;
+}
+.cl-top strong { font-size: 13.5px; }
+.cl-note { font-size: 13px; color: var(--text); margin-top: 7px; line-height: 1.5; }
+.cl-who { font-size: 11.5px; color: var(--text-faint); margin-top: 4px; }
+.cl-steps { margin-top: 8px; }
+.cl-steps summary { font-size: 12px; color: var(--text-soft); cursor: pointer; font-weight: 550; }
+.cl-steps ol { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+.cl-steps li {
+  border-left: 3px solid var(--kind-color, var(--border-strong)); padding: 1px 0 1px 10px;
+  font-size: 12.5px; display: flex; gap: 8px; align-items: baseline;
+}
+.cl-steps li span { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
+.cl-restore { flex: 0 0 auto; white-space: nowrap; }
 
 .kind-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .kind-card {

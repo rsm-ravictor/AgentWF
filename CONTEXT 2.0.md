@@ -107,6 +107,11 @@ Clicking a use case tile (or a name in the top bar) opens a detail page with thi
 A dedicated page (reachable from the top bar or dashboard) that is not tied to any one
 use case. It holds:
 - A summary rollup of the use cases in the division — what each one does, at a glance.
+- A **change log of workflow definitions**: every version each workflow has had, newest
+  first, with what changed, who changed it, when, the steps that version contained, and a
+  **roll back to this version** action. Because a definition decides what a run executes,
+  an edit is a change to the system's behaviour; this is the way back from one that broke
+  something.
 - Important language/terminology references: shared vocabulary, rubric terms, and any
   standard phrasing used across use case narratives, so terms stay consistent instead of
   being redefined slightly differently inside each use case's narrative panel.
@@ -176,6 +181,27 @@ runner does there: `intake` (check required documents against the repository),
 record file), `note` (reported, no action). A step someone adds in the narrative
 is a step the run reports on — there is no second list of steps in code.
 
+### Definition history and rollback — `workflow_revisions`
+Every write to a definition — the first seed, an edit, a reset to defaults, a
+rollback — lands a row in `workflow_revisions` holding the whole definition as it
+stood after that write, stored as JSON so a historical version keeps exactly what
+was saved even if the step table's shape or the shipped defaults later change.
+Versions are 1-based per workflow and division, so "v3" means something to a
+person reading the log.
+
+Each row carries a plain-language note of what changed against the previous
+version — added, removed, retyped, reworded, reordered, naming the steps —
+written at save time while both sides are in hand, so the log reads as what
+happened rather than as two lists to compare. Editing a workflow nobody had
+opened yet seeds the shipped baseline first, so version 1 is always a version
+there is something to roll back to. A save that changed nothing records nothing.
+
+A rollback (`POST /workflows/{id}/revisions/{version}/restore`) replays that
+version's steps as a **new** version rather than rewinding, so nothing leaves the
+history and a bad rollback can itself be rolled back. The Reference page's change
+log is the division-wide view of this; the use case page's version chip links into
+it filtered to that workflow.
+
 ### Running a use case — `aat_system/workflow_runner.py`
 `POST /workflows/{id}/run` streams newline-delimited JSON, one event per state
 change, so the status bar moves while the run is still going rather than
@@ -244,9 +270,11 @@ dashboard, so a demo queue is never mistaken for real work.
 | `GET /workflows/{id}` | The use case detail bundle: definition, approvals, records, documents, rubric |
 | `PUT /workflows/{id}/definition` | Rewrite the steps from an edited narrative |
 | `POST /workflows/{id}/definition/reset` | Restore the shipped definition |
+| `GET /workflows/{id}/history` | Every version of that definition, newest first |
+| `POST /workflows/{id}/revisions/{version}/restore` | Roll back to a past version |
 | `POST /workflows/{id}/run` | Run the use case, streaming one JSON event per step |
 | `GET /workflows/{id}/records.csv` | The workflow's record file |
-| `GET /reference` | Use case rollup, step kinds, and shared vocabulary |
+| `GET /reference` | Use case rollup, definition change log, step kinds, and shared vocabulary |
 | `GET /approvals`, `POST /approvals/{id}/resolve` | The human-in-the-loop queue |
 | `DELETE /approvals/samples` | Clear the seeded sample cases for a division |
 | `GET /repository/documents`, `GET /repository/documents/{id}/download` | Folder contents and archived files |
@@ -284,11 +312,12 @@ footer both say so up front, attaching a file returns 503 with an actionable mes
 a run with no attachment still works — it reports on what is already on file.
 
 ### Testing
-`python -m pytest tests/ -q` — 55 tests, no API key required and no model call made.
-Coverage is on the definition seed/edit/reset cycle, the required-document check, records
-and the approvals queue (`test_workflow_repo.py`), the run engine including that an edited
-definition changes what the run does (`test_workflow_runner.py`), and roles/permissions
-(`test_access_control.py`).
+`python -m pytest tests/ -q` — 64 tests, no API key required and no model call made.
+Coverage is on the definition seed/edit/reset cycle, revision history and rollback
+(including that a rollback is a new version and that the bad edit stays on the record),
+the required-document check, records and the approvals queue (`test_workflow_repo.py`),
+the run engine including that an edited definition changes what the run does
+(`test_workflow_runner.py`), and roles/permissions (`test_access_control.py`).
 
 Sample documents in `sample_docs/`:
 
@@ -299,7 +328,10 @@ Sample documents in `sample_docs/`:
 ## Known Gaps
 - `/dashboard/summary`, `/workflows/*`, `/reference` and `/approvals` are unauthenticated so
   the preview UI can reach them. Gate them behind `get_current_active_user` before exposing
-  beyond localhost — `POST /workflows/{id}/run` accepts uploads and spends API tokens.
+  beyond localhost — `POST /workflows/{id}/run` accepts uploads and spends API tokens, and
+  the definition write, reset and rollback endpoints change what every later run executes.
+  The UI disables editing and rolling back for roles without `edit_workflow`; the server
+  does not yet refuse them.
 - UI login is simulated: any password is accepted and no token is issued. The username is
   resolved server-side to a real account, so the *role* is real even though the session is
   not; the authenticated endpoints are not exercised by the frontend.

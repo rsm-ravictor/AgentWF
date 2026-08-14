@@ -13,10 +13,15 @@ Also here:
   so present/missing is a deterministic answer rather than a guess.
 * **Records** — one row per completed run, exported as the workflow's record
   file and rolled up on the reference page.
+* **Revisions** — every version a definition has ever had, so a definition that
+  broke something can be read back and restored. A definition decides what a run
+  executes, which makes an edit a change to the system's behaviour; the change
+  log is the way back.
 """
 
 import csv
 import io
+import json
 import re
 from datetime import datetime
 from typing import List, Optional
@@ -25,7 +30,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .config import Division
-from .models import Document, Folder, WorkflowRecord, WorkflowStep
+from .models import Document, Folder, WorkflowRecord, WorkflowRevision, WorkflowStep
 
 # Extensions that count as a "record file" a user would want to open rather than
 # treat as evidence to be graded.
@@ -42,6 +47,15 @@ STEP_KINDS = {
     "human": "Hands the outcome to a person",
     "record": "Writes the result to the record file",
     "note": "Descriptive step with no automated action",
+}
+
+# How a version of a definition came to be. Shown in the change log so a restore
+# after a bad edit reads differently from the edit itself.
+REVISION_SOURCES = {
+    "seed": "Shipped default",
+    "edit": "Edited",
+    "reset": "Restored defaults",
+    "restore": "Rolled back",
 }
 
 # ---------------------------------------------------------------------------
@@ -509,6 +523,8 @@ def _write_steps(
     division: Division,
     steps: List[dict],
     updated_by: Optional[str] = None,
+    source: str = "edit",
+    restored_from: Optional[int] = None,
 ) -> None:
     """Replace the definition wholesale.
 
@@ -553,6 +569,16 @@ def _write_steps(
             )
         )
     db.commit()
+    # Every path that changes a definition comes through here, so recording the
+    # version here is what makes the history complete rather than best-effort.
+    _record_revision(
+        db,
+        workflow_id,
+        division,
+        source=source,
+        created_by=updated_by,
+        restored_from=restored_from,
+    )
 
 
 def _is_default(steps: List[dict], workflow_id: str) -> bool:
@@ -575,7 +601,9 @@ def get_definition(db: Session, workflow_id: str, division: Division) -> dict:
 
     rows = _ordered_steps(db, workflow_id, division)
     if not rows:
-        _write_steps(db, workflow_id, division, DEFAULT_STEPS.get(workflow_id, []), "AAT default")
+        _write_steps(
+            db, workflow_id, division, DEFAULT_STEPS.get(workflow_id, []), "AAT default", source="seed"
+        )
         rows = _ordered_steps(db, workflow_id, division)
 
     steps = [_step_dict(r) for r in rows]
@@ -611,6 +639,11 @@ def update_definition(
     if not steps:
         raise ValueError("A workflow needs at least one step.")
 
+    # Seed first if this definition has never been read, so version 1 is always
+    # the shipped default. Otherwise the first edit to an untouched workflow
+    # would become version 1 and leave nothing to roll back to.
+    get_definition(db, workflow_id, division)
+
     _write_steps(db, workflow_id, division, steps, updated_by)
     return get_definition(db, workflow_id, division)
 
@@ -621,7 +654,246 @@ def reset_definition(
     """Restore the shipped steps — the escape hatch after a bad edit."""
     if workflow_id not in WORKFLOW_CATALOG:
         raise ValueError(f"Unknown workflow '{workflow_id}'")
-    _write_steps(db, workflow_id, division, DEFAULT_STEPS.get(workflow_id, []), updated_by or "AAT default")
+    get_definition(db, workflow_id, division)  # baseline on the record first
+    _write_steps(
+        db,
+        workflow_id,
+        division,
+        DEFAULT_STEPS.get(workflow_id, []),
+        updated_by or "AAT default",
+        source="reset",
+    )
+    return get_definition(db, workflow_id, division)
+
+
+# ---------------- Revisions: every version a definition has had ----------------
+
+def _storable_steps(db: Session, workflow_id: str, division: Division) -> List[dict]:
+    """The current definition in the shape `_write_steps` accepts.
+
+    Storing it in the write shape is what makes a restore a straight replay of a
+    past version rather than a translation that could lose something.
+    """
+    return [
+        {
+            "key": row.key,
+            "title": row.title,
+            "kind": row.kind,
+            "summary": row.summary or "",
+            "bullets": [line for line in (row.bullets or "").split("\n") if line.strip()],
+        }
+        for row in _ordered_steps(db, workflow_id, division)
+    ]
+
+
+def _describe_change(previous: Optional[List[dict]], current: List[dict]) -> str:
+    """A plain-language summary of what one version changed against the last.
+
+    Written at save time, while both sides are in hand, so the log reads as what
+    happened rather than as two lists a person has to compare themselves.
+    """
+    if previous is None:
+        return f"Initial definition — {len(current)} step{'s' if len(current) != 1 else ''}."
+
+    before = {s["title"]: s for s in previous}
+    after = {s["title"]: s for s in current}
+
+    added = [t for t in after if t not in before]
+    removed = [t for t in before if t not in after]
+    retyped = [
+        f"“{t}” is now {after[t]['kind'].title()}"
+        for t in after
+        if t in before and after[t]["kind"] != before[t]["kind"]
+    ]
+    reworded = [
+        t
+        for t in after
+        if t in before
+        and after[t]["kind"] == before[t]["kind"]
+        and (after[t]["summary"] != before[t]["summary"] or after[t]["bullets"] != before[t]["bullets"])
+    ]
+    kept_order_before = [s["title"] for s in previous if s["title"] in after]
+    kept_order_after = [s["title"] for s in current if s["title"] in before]
+    reordered = kept_order_before != kept_order_after
+
+    parts = []
+    if added:
+        parts.append("added " + _quoted_list(added))
+    if removed:
+        parts.append("removed " + _quoted_list(removed))
+    if retyped:
+        parts.append(_join_clause(retyped))
+    if reworded:
+        parts.append("reworded " + _quoted_list(reworded))
+    if reordered and not (added or removed):
+        parts.append("reordered the steps")
+
+    # A save that changed nothing never gets here — `_record_revision` returns
+    # early — so `parts` is only empty if a change slipped past every check.
+    if not parts:
+        return f"Changed — {len(current)} step{'s' if len(current) != 1 else ''}."
+    return (parts[0][0].upper() + parts[0][1:]) + ("; " + "; ".join(parts[1:]) if len(parts) > 1 else "") + "."
+
+
+def _quoted_list(titles: List[str], limit: int = 3) -> str:
+    shown = [f"“{t}”" for t in titles[:limit]]
+    extra = len(titles) - len(shown)
+    joined = _join_clause(shown)
+    return joined + (f" and {extra} more" if extra > 0 else "")
+
+
+def _join_clause(items: List[str]) -> str:
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _record_revision(
+    db: Session,
+    workflow_id: str,
+    division: Division,
+    source: str = "edit",
+    created_by: Optional[str] = None,
+    restored_from: Optional[int] = None,
+) -> WorkflowRevision:
+    """Save the definition as it now stands as the next version.
+
+    A save that left the steps exactly as they were records nothing: the log is
+    there to answer "what changed and when", and a version that changed nothing
+    only buries the ones that did.
+    """
+    steps = _storable_steps(db, workflow_id, division)
+    latest = (
+        db.query(WorkflowRevision)
+        .filter(WorkflowRevision.workflow_id == workflow_id, WorkflowRevision.division == division)
+        .order_by(WorkflowRevision.version.desc())
+        .first()
+    )
+    previous_steps = json.loads(latest.steps_json) if latest else None
+    if previous_steps == steps:
+        return latest
+
+    revision = WorkflowRevision(
+        workflow_id=workflow_id,
+        division=division,
+        version=(latest.version + 1) if latest else 1,
+        steps_json=json.dumps(steps),
+        step_count=len(steps),
+        source=source,
+        note=_describe_change(previous_steps, steps),
+        restored_from=restored_from,
+        created_by=created_by or None,
+    )
+    db.add(revision)
+    db.commit()
+    db.refresh(revision)
+    return revision
+
+
+def _revision_dict(revision: WorkflowRevision, current_version: int) -> dict:
+    wf = WORKFLOW_CATALOG.get(revision.workflow_id, {})
+    steps = json.loads(revision.steps_json)
+    return {
+        "version": revision.version,
+        "workflow_id": revision.workflow_id,
+        "workflow_title": wf.get("title", revision.workflow_id),
+        "source": revision.source,
+        "source_label": REVISION_SOURCES.get(revision.source, "Saved"),
+        "note": revision.note or "",
+        "restored_from": revision.restored_from,
+        "step_count": revision.step_count,
+        "steps": [
+            {
+                "title": s["title"],
+                "kind": s["kind"],
+                "kind_label": STEP_KINDS.get(s["kind"], "Step"),
+            }
+            for s in steps
+        ],
+        "created_at": revision.created_at.isoformat() if revision.created_at else None,
+        "created_by": revision.created_by,
+        "is_current": revision.version == current_version,
+    }
+
+
+def current_version(db: Session, workflow_id: str, division: Division) -> int:
+    return (
+        db.query(func.max(WorkflowRevision.version))
+        .filter(WorkflowRevision.workflow_id == workflow_id, WorkflowRevision.division == division)
+        .scalar()
+        or 0
+    )
+
+
+def list_revisions(
+    db: Session, workflow_id: str, division: Division, limit: int = 50
+) -> List[dict]:
+    """Every version of one workflow's definition, newest first."""
+    rows = (
+        db.query(WorkflowRevision)
+        .filter(WorkflowRevision.workflow_id == workflow_id, WorkflowRevision.division == division)
+        .order_by(WorkflowRevision.version.desc())
+        .limit(limit)
+        .all()
+    )
+    latest = rows[0].version if rows else 0
+    return [_revision_dict(r, latest) for r in rows]
+
+
+def change_log(db: Session, division: Division, limit: int = 60) -> List[dict]:
+    """Definition changes across every workflow in the division, newest first.
+
+    This is what the Reference page shows: one division-wide history, so "when
+    did this system's behaviour last change" is one place to look rather than
+    five.
+    """
+    current = {
+        wf_id: current_version(db, wf_id, division) for wf_id in WORKFLOW_CATALOG
+    }
+    rows = (
+        db.query(WorkflowRevision)
+        .filter(WorkflowRevision.division == division)
+        .order_by(WorkflowRevision.created_at.desc(), WorkflowRevision.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_revision_dict(r, current.get(r.workflow_id, 0)) for r in rows]
+
+
+def restore_revision(
+    db: Session,
+    workflow_id: str,
+    division: Division,
+    version: int,
+    updated_by: Optional[str] = None,
+) -> dict:
+    """Put a past version back as the live definition.
+
+    The restore is itself a new version rather than a rewind: nothing is deleted
+    from the history, so restoring a bad restore is possible too.
+    """
+    if workflow_id not in WORKFLOW_CATALOG:
+        raise ValueError(f"Unknown workflow '{workflow_id}'")
+
+    revision = (
+        db.query(WorkflowRevision)
+        .filter(
+            WorkflowRevision.workflow_id == workflow_id,
+            WorkflowRevision.division == division,
+            WorkflowRevision.version == version,
+        )
+        .first()
+    )
+    if revision is None:
+        raise ValueError(f"Version {version} of '{workflow_id}' does not exist.")
+
+    steps = json.loads(revision.steps_json)
+    if not steps:
+        raise ValueError(f"Version {version} of '{workflow_id}' has no steps to restore.")
+
+    _write_steps(
+        db, workflow_id, division, steps, updated_by, source="restore", restored_from=version
+    )
     return get_definition(db, workflow_id, division)
 
 

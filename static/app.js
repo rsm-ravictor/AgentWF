@@ -41,6 +41,7 @@
     attachment: null,
     openFolder: null,
     view: 'dashboard',
+    changeLogFilter: '', // '' = every use case in the division
   };
 
   const can = (permission) => !!(state.profile && state.profile.permissions.includes(permission));
@@ -568,6 +569,10 @@
       ? 'Shipped definition'
       : `Edited ${formatWhen(def.updated_at)}${def.updated_by ? ' by ' + def.updated_by : ''}`;
 
+    const version = wf.detail.version || 1;
+    qs('#uc-version').innerHTML = `${icon('i-book')} Version ${version} — history`;
+    qs('#uc-version').title = 'See every version of this workflow, and roll back to one';
+
     renderDiagram();
     renderNarrative();
     renderUseCaseState();
@@ -644,6 +649,14 @@
       qs('#overlay-diagram').classList.toggle('is-draft', isDraft);
     }
   }
+
+  // The version chip is the route from "this workflow changed" to the log that
+  // says how, filtered to the use case in hand.
+  qs('#uc-version').addEventListener('click', () => {
+    if (!state.workflow) return;
+    state.changeLogFilter = state.workflow.id;
+    switchView('reference');
+  });
 
   qs('#diagram-expand').addEventListener('click', () => {
     if (!state.workflow) return;
@@ -1215,6 +1228,8 @@
       btn.addEventListener('click', () => openUseCase(btn.dataset.openRef))
     );
 
+    renderChangeLog();
+
     qs('#ref-kinds').innerHTML = Object.entries(data.step_kinds)
       .map(
         ([key, description]) => `
@@ -1235,6 +1250,127 @@
       )
       .join('');
   }
+
+  // ---- Change log: every version a definition has had, and the way back ----
+
+  function renderChangeLog() {
+    const data = state.reference;
+    const log = data.change_log || [];
+    const filter = qs('#changelog-filter');
+
+    // Keep the filter's options in step with what the log actually contains.
+    const seen = [];
+    log.forEach((entry) => {
+      if (!seen.some((s) => s.id === entry.workflow_id))
+        seen.push({ id: entry.workflow_id, title: entry.workflow_title });
+    });
+    const chosen = state.changeLogFilter || '';
+    filter.innerHTML =
+      '<option value="">All use cases</option>' +
+      seen
+        .map(
+          (s) =>
+            `<option value="${esc(s.id)}" ${s.id === chosen ? 'selected' : ''}>${esc(s.title)}</option>`
+        )
+        .join('');
+
+    const shown = chosen ? log.filter((e) => e.workflow_id === chosen) : log;
+    const canRestore = can('edit_workflow');
+
+    qs('#ref-changelog').innerHTML = shown.length
+      ? shown.map((entry) => changeLogRowHtml(entry, canRestore)).join('')
+      : `<p class="empty">No definition changes recorded yet. Every save, reset and rollback
+          from here on is logged, with the version to return to.</p>`;
+
+    qsa('#ref-changelog [data-restore]').forEach((btn) =>
+      btn.addEventListener('click', () => restoreRevision(btn.dataset.restore, Number(btn.dataset.version)))
+    );
+  }
+
+  function changeLogRowHtml(entry, canRestore) {
+    const sourcePill =
+      { seed: 'pill-quiet', edit: 'pill-running', reset: 'pill-warn', restore: 'pill-warn' }[
+        entry.source
+      ] || 'pill-quiet';
+    return `
+      <article class="cl-row ${entry.is_current ? 'current' : ''}">
+        <div class="cl-main">
+          <div class="cl-top">
+            <span class="cl-version">v${entry.version}</span>
+            <strong>${esc(entry.workflow_title)}</strong>
+            <span class="pill ${sourcePill}">${esc(entry.source_label)}</span>
+            ${entry.is_current ? '<span class="pill pill-ok">Live now</span>' : ''}
+            ${
+              entry.restored_from
+                ? `<span class="chip chip-quiet">back to v${entry.restored_from}</span>`
+                : ''
+            }
+          </div>
+          <p class="cl-note">${esc(entry.note)}</p>
+          <p class="cl-who">
+            ${entry.step_count} step${entry.step_count === 1 ? '' : 's'} ·
+            ${esc(entry.created_by || 'unattributed')} · ${formatWhen(entry.created_at)}
+          </p>
+          <details class="cl-steps">
+            <summary>The ${entry.step_count} step${entry.step_count === 1 ? '' : 's'} in this version</summary>
+            <ol>
+              ${entry.steps
+                .map(
+                  (s) =>
+                    `<li class="kind-${esc(s.kind)}"><strong>${esc(s.title)}</strong>
+                      <span>${esc(KINDS[s.kind] || s.kind)}</span></li>`
+                )
+                .join('')}
+            </ol>
+          </details>
+        </div>
+        ${
+          entry.is_current
+            ? ''
+            : `<button class="btn btn-secondary btn-sm cl-restore" data-restore="${esc(
+                entry.workflow_id
+              )}" data-version="${entry.version}" ${canRestore ? '' : 'disabled'} title="${
+                canRestore
+                  ? 'Make this version the live definition again'
+                  : 'Your role cannot edit workflow definitions'
+              }">${icon('i-arrow-left')} Roll back to v${entry.version}</button>`
+        }
+      </article>`;
+  }
+
+  async function restoreRevision(workflowId, version) {
+    if (!can('edit_workflow')) return toast('Your role cannot edit workflow definitions.', 'error');
+    const entry = (state.reference.change_log || []).find(
+      (e) => e.workflow_id === workflowId && e.version === version
+    );
+    const title = entry ? entry.workflow_title : workflowId;
+    if (
+      !window.confirm(
+        `Roll ${title} back to version ${version}?\n\nThe current version stays in the log, ` +
+          'so this can be undone. Runs after this use the restored steps.'
+      )
+    )
+      return;
+
+    try {
+      const definition = await api(
+        `/workflows/${encodeURIComponent(workflowId)}/revisions/${version}/restore`,
+        jsonBody({ division: state.division, updated_by: state.profile.name })
+      );
+      toast(`${title} is back to version ${version}.`, 'ok');
+      // The open use case, the dashboard tiles and the log itself all read the
+      // definition that just changed.
+      if (state.workflow && state.workflow.id === workflowId) applyDefinition(definition);
+      await Promise.all([loadReference(), refreshDashboard()]);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  qs('#changelog-filter').addEventListener('change', (event) => {
+    state.changeLogFilter = event.target.value;
+    renderChangeLog();
+  });
 
   // ---------------- Profile ----------------
 

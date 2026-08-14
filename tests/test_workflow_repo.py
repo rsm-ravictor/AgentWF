@@ -173,6 +173,136 @@ def test_unknown_workflow_is_rejected(db):
         workflow_repo.get_definition(db, "not-a-workflow", MF)
 
 
+# ---------------- Revisions: the way back from a bad edit ----------------
+
+def test_seeding_a_definition_records_version_one(db):
+    workflow_repo.get_definition(db, "vendor-insurance", MF)
+    revisions = workflow_repo.list_revisions(db, "vendor-insurance", MF)
+
+    assert len(revisions) == 1
+    assert revisions[0]["version"] == 1
+    assert revisions[0]["source"] == "seed"
+    assert revisions[0]["is_current"] is True
+    assert "Initial definition" in revisions[0]["note"]
+
+
+def test_each_edit_records_the_next_version_with_what_changed(db):
+    workflow_repo.get_definition(db, "vendor-insurance", MF)
+    workflow_repo.update_definition(
+        db,
+        "vendor-insurance",
+        MF,
+        [{"title": "Collect", "kind": "intake", "summary": "Get it.", "bullets": []}],
+        updated_by="Jordan",
+    )
+
+    revisions = workflow_repo.list_revisions(db, "vendor-insurance", MF)
+    assert [r["version"] for r in revisions] == [2, 1]  # newest first
+    assert revisions[0]["created_by"] == "Jordan"
+    assert revisions[0]["step_count"] == 1
+    assert "removed" in revisions[0]["note"]
+    assert revisions[0]["is_current"] is True
+    assert revisions[1]["is_current"] is False
+
+
+def test_the_note_names_what_was_added_and_retyped(db):
+    workflow_repo.update_definition(
+        db,
+        "vendor-insurance",
+        MF,
+        [{"title": "Collect", "kind": "intake", "summary": "", "bullets": []}],
+    )
+    workflow_repo.update_definition(
+        db,
+        "vendor-insurance",
+        MF,
+        [
+            {"title": "Collect", "kind": "analysis", "summary": "", "bullets": []},
+            {"title": "Sign off", "kind": "human", "summary": "", "bullets": []},
+        ],
+    )
+
+    note = workflow_repo.list_revisions(db, "vendor-insurance", MF)[0]["note"]
+    assert "Sign off" in note  # the added step is named
+    assert "Analysis" in note  # the retyped step reports its new type
+
+
+def test_a_save_that_changed_nothing_records_no_version(db):
+    workflow_repo.get_definition(db, "vendor-insurance", MF)
+    before = len(workflow_repo.list_revisions(db, "vendor-insurance", MF))
+
+    steps = [
+        {
+            "title": s["title"],
+            "kind": s["kind"],
+            "summary": s["summary"],
+            "bullets": s["bullets"],
+        }
+        for s in workflow_repo.get_definition(db, "vendor-insurance", MF)["steps"]
+    ]
+    workflow_repo.update_definition(db, "vendor-insurance", MF, steps)
+
+    assert len(workflow_repo.list_revisions(db, "vendor-insurance", MF)) == before
+
+
+def test_restoring_a_version_brings_back_exactly_those_steps(db):
+    original = workflow_repo.get_definition(db, "breach-notice", MF)
+    workflow_repo.update_definition(
+        db, "breach-notice", MF, [{"title": "Broken", "kind": "note", "summary": "", "bullets": []}]
+    )
+
+    restored = workflow_repo.restore_revision(db, "breach-notice", MF, 1, updated_by="Jordan")
+
+    assert [s["title"] for s in restored["steps"]] == [s["title"] for s in original["steps"]]
+    assert [s["bullets"] for s in restored["steps"]] == [s["bullets"] for s in original["steps"]]
+    # What the run walks is the restored list, not the broken one.
+    assert [s["title"] for s in workflow_repo.get_definition(db, "breach-notice", MF)["steps"]] == [
+        s["title"] for s in original["steps"]
+    ]
+
+
+def test_a_rollback_is_recorded_as_a_new_version_not_a_rewind(db):
+    workflow_repo.get_definition(db, "breach-notice", MF)
+    workflow_repo.update_definition(
+        db, "breach-notice", MF, [{"title": "Broken", "kind": "note", "summary": "", "bullets": []}]
+    )
+    workflow_repo.restore_revision(db, "breach-notice", MF, 1, updated_by="Jordan")
+
+    revisions = workflow_repo.list_revisions(db, "breach-notice", MF)
+    assert [r["version"] for r in revisions] == [3, 2, 1]
+    assert revisions[0]["source"] == "restore"
+    assert revisions[0]["restored_from"] == 1
+    # The bad edit is still on the record, so a rollback can be rolled back.
+    assert revisions[1]["step_count"] == 1
+
+
+def test_restoring_a_version_that_does_not_exist_is_refused(db):
+    workflow_repo.get_definition(db, "breach-notice", MF)
+    with pytest.raises(ValueError):
+        workflow_repo.restore_revision(db, "breach-notice", MF, 99)
+
+
+def test_the_change_log_spans_the_division_newest_first(db):
+    workflow_repo.get_definition(db, "vendor-insurance", MF)
+    workflow_repo.update_definition(
+        db, "breach-notice", MF, [{"title": "Only step", "kind": "note", "summary": "", "bullets": []}]
+    )
+
+    log = workflow_repo.change_log(db, MF)
+    assert {entry["workflow_id"] for entry in log} == {"vendor-insurance", "breach-notice"}
+    assert all(entry["workflow_title"] for entry in log)
+    versions = [(e["workflow_id"], e["version"]) for e in log]
+    assert ("breach-notice", 2) in versions
+
+
+def test_history_is_per_division(db):
+    workflow_repo.update_definition(
+        db, "breach-notice", MF, [{"title": "Multifamily only", "kind": "note", "summary": "", "bullets": []}]
+    )
+    assert workflow_repo.list_revisions(db, "breach-notice", Division.OFFICE) == []
+    assert workflow_repo.change_log(db, Division.OFFICE) == []
+
+
 # ---------------- Required documents ----------------
 
 def test_required_documents_start_missing_on_an_empty_repository(db):

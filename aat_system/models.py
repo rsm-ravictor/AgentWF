@@ -116,6 +116,45 @@ class WorkflowStep(Base):
     )
 
 
+class WorkflowRevision(Base):
+    """One saved version of one workflow's definition.
+
+    Every write to workflow_steps — the first seed, an edit, a reset, a restore —
+    lands a row here holding the whole definition as it stood after that write.
+    Because a definition decides what a run executes, a bad edit is a broken
+    system; this is what makes that recoverable. The change log on the Reference
+    page reads these rows, and restoring one writes the steps back.
+
+    The definition is stored as JSON rather than as step rows: a revision is a
+    historical record, so it should keep exactly what was saved even if the step
+    table's shape or the shipped defaults later change.
+    """
+
+    __tablename__ = "workflow_revisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(String, nullable=False, index=True)
+    division = Column(Enum(Division), nullable=False, index=True)
+    # 1-based and per workflow+division, so "version 3" means something to a
+    # person reading the log.
+    version = Column(Integer, nullable=False)
+    steps_json = Column(Text, nullable=False)
+    step_count = Column(Integer, nullable=False, default=0)
+    # seed | edit | reset | restore — how this version came to be.
+    source = Column(String, nullable=False, default="edit")
+    # A plain-language summary of what changed against the previous version,
+    # written at save time while both sides are in hand.
+    note = Column(Text, nullable=True)
+    # Set when this version was produced by restoring an earlier one.
+    restored_from = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_by = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "division", "version", name="uq_revision_workflow_division_version"),
+    )
+
+
 class WorkflowRecord(Base):
     """One logged row of record-keeping for a workflow run.
 
