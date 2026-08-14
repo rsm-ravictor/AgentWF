@@ -106,6 +106,14 @@ use case. It holds:
   standard phrasing used across use case narratives, so terms stay consistent instead of
   being redefined slightly differently inside each use case's narrative panel.
 
+### 5. Account screens
+Reached from the user menu in the header rather than the main navigation, because they
+belong to the account rather than to a division's work:
+- **Profile & access** — what the signed-in account is allowed to do and where those
+  limits come from (role, the permissions it grants, division scope).
+- **Administration** — the roster: who has access, what role they hold, and what that
+  role grants. Only shown to accounts that can manage users.
+
 ### Design implication
 Because every use case shares this same page shell (header, 2/3 diagram + 1/3 narrative,
 enlarge/close overlay, edit-in-place, start/status/outcome footer), the use case-specific
@@ -189,6 +197,28 @@ exists** and runs on the shared shell like every other one; only the highlight-e
 implementation behind it is gone. When the new approach is defined it becomes a step
 definition plus a rubric, not a new page.
 
+### Roles and permissions — `aat_system/config.py`
+Six roles (`Role`) and ten discrete capabilities (`Permission`) with an explicit
+`ROLE_PERMISSIONS` map, so the Profile and Administration screens can report *what* a
+role actually lets someone do rather than showing an opaque label. The ladder is not a
+strict superset: Agent, Reviewer and Subgroup Owner are peers with different duties — a
+Reviewer signs off but cannot upload; an Agent uploads and runs work but never signs
+off. Only the senior tier (Division Head → Admin → Super User) genuinely accumulates.
+
+### Redaction before ingestion — `aat_system/redaction.py`
+A document is redacted on its way into the repository, not after. `document_repo`
+routes every upload through `redact_uploaded_file` before archiving it, stamps
+`Document.redacted_at`, and the folder view labels the result. Patterns live in
+`REDACTION_PATTERNS` (SSN, card and tax numbers, phone, email). PDF handling is
+page-level and coarse — extend `redaction.py` for content-level rules.
+
+### Seeded on first run
+Startup creates the core folders for both divisions, seeds the roster
+(`DEFAULT_ROSTER` — one account per role, password `prototype`), and fills an empty
+approvals queue with illustrative cases tagged `source='sample'`, so a fresh install is
+not an empty screen. Samples are labelled as samples in the UI and clearable from the
+dashboard, so a demo queue is never mistaken for real work.
+
 ### API surface
 | Endpoint | Purpose |
 | --- | --- |
@@ -201,12 +231,14 @@ definition plus a rubric, not a new page.
 | `GET /workflows/{id}/records.csv` | The workflow's record file |
 | `GET /reference` | Use case rollup, step kinds, and shared vocabulary |
 | `GET /approvals`, `POST /approvals/{id}/resolve` | The human-in-the-loop queue |
+| `DELETE /approvals/samples` | Clear the seeded sample cases for a division |
 | `GET /repository/documents`, `GET /repository/documents/{id}/download` | Folder contents and archived files |
 | `POST /token`, `POST /users`, `GET /users/me` | Auth and user management |
 | `POST /session/resolve`, `GET /roles`, `GET /admin/users`, `PATCH /admin/users/{id}` | Session role resolution and administration |
 | `POST /documents/upload` | Ingest into the repository |
 | `GET /leases/expired` | Lease expiration scan |
 | `GET /folders/{division}/{folder}/documents` | Folder contents (authenticated) |
+| `GET /users/{user_id}/folders` | The folders a given account may reach (authenticated) |
 
 > Document grading no longer has its own endpoint. Attaching a file to
 > `POST /workflows/{id}/run` grades it as that workflow's `analysis` step, so there is one
@@ -215,10 +247,17 @@ definition plus a rubric, not a new page.
 
 ### Frontend
 Single-page app in `static/` (`index.html`, `app.js`, `style.css`) — no build step. It
-implements the four screens described under "Frontend Redesign" above: login/division,
-division dashboard, use case detail, reference. The use case shell is written once and
-reused for every use case; a new use case needs no new frontend code. Dark mode follows
-system preference and persists.
+implements the screens described under "Frontend Redesign" above: login/division,
+division dashboard, use case detail and reference, plus the two account views (profile
+and administration) reached from the header's user menu. The use case shell is written
+once and reused for every use case; a new use case needs no new frontend code. Dark mode
+follows system preference and persists.
+
+The dashboard carries four at-a-glance tiles (use cases, documents on file, leases
+expiring in 30 days, pending human review), the use case tile grid, a folder grid that
+expands into a searchable document list, and the approvals queue grouped by use case.
+`index.html` is served with `Cache-Control: no-store` and its asset URLs are stamped with
+each file's mtime, so a browser cannot mix an old `app.js` with a new `index.html`.
 
 ### Configuration
 `ANTHROPIC_API_KEY` is required to grade an attached document; `ANTHROPIC_MODEL` defaults
