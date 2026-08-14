@@ -11,4 +11,3 @@ anthropic>=0.75.0
 
 # Dev / test only
 pytest>=8.0.0
-reportlab>=4.0.0  # generates the sample highlighted DAR in sample_docs/

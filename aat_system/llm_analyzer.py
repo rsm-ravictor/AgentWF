@@ -143,21 +143,26 @@ def _client() -> anthropic.Anthropic:
 
 
 def has_api_key() -> bool:
-    """Whether a credential actually resolved, so the UI can warn before a run.
+    """Whether a usable credential resolved, so the UI can warn before a run.
 
     The client constructor does not raise on missing credentials — it fails at
     request time — so inspect the resolved values rather than construction.
+    The placeholder shipped in .env.example is treated as absent: it resolves to
+    a non-empty string, which would otherwise report "configured" right up until
+    the API rejects it mid-run.
     """
     try:
         client = _client()
     except Exception:
         return False
-    return bool(
+    resolved = (
         getattr(client, "api_key", None)
         or getattr(client, "auth_token", None)
         or os.getenv("ANTHROPIC_API_KEY")
         or os.getenv("ANTHROPIC_AUTH_TOKEN")
+        or ""
     )
+    return bool(resolved) and "replace-with" not in resolved
 
 
 def _document_block(file_bytes: bytes, media_type: str) -> dict:

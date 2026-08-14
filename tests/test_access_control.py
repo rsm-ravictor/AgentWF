@@ -93,8 +93,8 @@ def test_subgroup_owner_runs_work_but_does_not_sign_off():
     assert not has_permission(Role.SUBGROUP_OWNER, Permission.APPROVE_WORKFLOW)
 
 
-def test_only_senior_roles_edit_standing_instructions():
-    editors = {r for r in Role if has_permission(r, Permission.EDIT_SOP)}
+def test_only_senior_roles_edit_workflow_definitions():
+    editors = {r for r in Role if has_permission(r, Permission.EDIT_WORKFLOW)}
     assert editors == {Role.SUPER_USER, Role.ADMIN, Role.DIVISION_HEAD}
 
 

@@ -1,55 +1,94 @@
 # AAT System
 
-A scaffold for a multi-division asset and lease management system with tiered access, document redaction, repository tracking, and email ingestion.
+A multi-division asset and lease management system: tiered access, a centralised
+document repository, and use cases that read documents, grade them against an
+explicit rubric, and hand every outcome to a person.
 
-## Architecture
+`CONTEXT 2.0.md` is the source of truth for what this repo is and how it is
+structured. This file is the short version of how to run it.
 
-- `aat_system/config.py` — shared constants, folder mappings, division definitions, folder names.
-- `aat_system/db.py` — SQLAlchemy database setup and session management.
-- `aat_system/models.py` — Users, divisions, documents, leases, folders, and breach logs.
-- `aat_system/auth.py` — role-based access control for division heads and subgroup owners.
-- `aat_system/redaction.py` — redaction layer for PDFs and uploads before repository ingestion.
-- `aat_system/document_repo.py` — centralized repository logic, lease monitoring, and folder sorting.
-- `aat_system/email_agent.py` — Phase 2 IMAP inbox scanning, PDF detection, redaction, and folder routing.
-- `aat_system/workflows.py` — workflows for vendor insurance, renter’s insurance, lease checklists, breach notices, and security reports.
-- `aat_system/main.py` — FastAPI app and CLI helpers.
+## The shape of the app
 
-## Getting Started
+Four screens, in the order a user meets them:
 
-1. Create a virtual environment and install dependencies:
+1. **Login** — company name, then a division: Residential/Multifamily or Office/Retail.
+   The division scopes every folder, use case and record from that point on.
+2. **Division dashboard** — the folders documents live in, and one tile per use
+   case. Every tile is the same shape whatever the use case does.
+3. **Use case detail** — a persistent top bar to jump between use cases, then a
+   fixed layout: the workflow diagram on the left (2/3, with an enlarge overlay),
+   the written walkthrough on the right (1/3, editable), and a run footer with a
+   live status bar and the outcome.
+4. **Reference** — a rollup of every use case in the division, and the shared
+   vocabulary their narratives are written against.
+
+The use case shell is built once and reused. What differs per use case is only
+its definition, so adding one takes no new frontend code.
+
+## One definition, three views
+
+A workflow definition is an ordered list of steps (`workflow_steps`). The
+diagram, the narrative, and the run all render from those same rows, and editing
+the narrative rewrites them. That is what stops the picture, the words and the
+execution drifting into three different answers.
+
+Each step carries a `kind`, which colours its node and decides what the runner
+does when it reaches it:
+
+| kind | what happens at that step |
+| --- | --- |
+| `intake` | Check the required documents against the repository |
+| `analysis` | Grade an attached document against the rubric, or report what is on file |
+| `decision` | Apply the pass rule to everything gathered so far |
+| `human` | Queue an approval case when the run could not clear on its own |
+| `record` | Write the run to the workflow's record file |
+| `note` | Descriptive only — reported, but takes no action |
+
+## Modules
+
+- `aat_system/config.py` — divisions, roles, permissions, folder names, paths.
+- `aat_system/models.py` — users, folders, documents, leases, approvals, workflow steps and records.
+- `aat_system/workflow_repo.py` — the use case catalog, definitions, required documents, records, glossary.
+- `aat_system/workflow_runner.py` — executes a use case step by step, yielding one event per state change.
+- `aat_system/llm_analyzer.py` — per-workflow rubrics and the structured-output call to Claude.
+- `aat_system/approval_repo.py` — the human-in-the-loop queue.
+- `aat_system/user_repo.py`, `auth.py`, `security.py` — roster, role scope, tokens.
+- `aat_system/document_repo.py`, `redaction.py` — ingestion, redaction, lease scanning.
+- `aat_system/main.py` — the FastAPI app.
+- `static/` — the UI. No build step: `index.html`, `app.js`, `style.css`.
+
+## Getting started
 
 ```bash
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-2. Copy `.env.example` to `.env` and update configuration values.
-
-3. Initialize the database and run the API:
-
-```bash
-python -m aat_system.main --init-db
+cp .env.example .env          # then set ANTHROPIC_API_KEY to grade documents
 uvicorn aat_system.main:app --reload
 ```
 
-4. Open the preview page in your browser:
+Open http://127.0.0.1:8000/. Any password works in this prototype; the
+**username sets the access level** — `admin@aat.com` (super user),
+`head.mf@aat.com` (division head), `reviewer@aat.com`, `agent@aat.com`. Anything
+else is provisioned as an Agent.
+
+Without an API key the app still runs: a run with no attachment reports on what
+is already on file, and the UI says up front that grading is unavailable.
+
+## Tests
 
 ```bash
-http://127.0.0.1:8000/
+python -m pytest tests/ -q
 ```
 
-## Key Features
-
-- Division-aware role permissions for `Office/Retail` and `Multifamily/Residential`.
-- Document upload redaction before repository ingestion, with manual upload access controlled by user role.
-- Lease expiration scanning and flagging.
-- Placeholder UI support for Phase 2 email ingestion; current workflow relies on manual uploads to the required folders.
-- External service API key support for decision-making workflows and downstream agent integrations.
-- Phase 1 workflows for Multifamily/Residential built around document-driven automation.
-- Phase 2 note: the Office/Retail division reuses the same architecture with division-specific folder mappings.
+No API key needed — no test makes a model call.
 
 ## Notes
 
-- The redaction implementation is designed as a layering point. Extend `aat_system/redaction.py` for content-level PDF redaction rules and sensitive data patterns.
-- Document routing is based on configured folder keywords and can be adapted for division-specific folder sets.
+- Documents are read from and written to the local filesystem
+  (`UPLOAD_ROOT`, `REDACTED_ROOT`, `ARCHIVE_ROOT`), not a cloud bucket.
+- Redaction runs before repository ingestion. Extend `redaction.py` for
+  content-level PDF rules.
+- Phase 2 (Office/Retail) reuses this architecture with division-specific folder
+  mappings rather than a separate build. Email inbox ingestion is Phase 2;
+  Phase 1 relies on manual upload.

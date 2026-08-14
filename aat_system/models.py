@@ -57,57 +57,12 @@ class Lease(Base):
     folder = relationship("Folder")
     document = relationship("Document")
 
-class DarReport(Base):
-    """One uploaded Daily Activity Report."""
-
-    __tablename__ = "dar_reports"
-
-    id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String, nullable=False)
-    property_id = Column(String, nullable=True, index=True)
-    property_name = Column(String, nullable=True)
-    report_date = Column(String, nullable=True, index=True)
-    shift_or_range = Column(String, nullable=True)
-    reporting_officer = Column(String, nullable=True)
-    highlights_detected = Column(Boolean, default=True)
-    notes = Column(Text, nullable=True)
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
-
-    incidents = relationship("DarIncident", back_populates="report", cascade="all, delete-orphan")
-
-
-class DarIncident(Base):
-    """One highlighted incident from a DAR, tied to a unit.
-
-    Persisting these is what makes "first violation date" mean anything across
-    weeks of reports rather than only within a single upload.
-    """
-
-    __tablename__ = "dar_incidents"
-
-    id = Column(Integer, primary_key=True, index=True)
-    report_id = Column(Integer, ForeignKey("dar_reports.id"), nullable=False)
-    property_id = Column(String, nullable=True, index=True)
-    unit = Column(String, nullable=False, index=True)
-    incident_date = Column(String, nullable=True, index=True)
-    incident_time = Column(String, nullable=True)
-    highlight = Column(String, nullable=False, default="none")
-    category = Column(String, nullable=True)
-    keywords = Column(Text, nullable=True)  # newline-delimited
-    snippet = Column(Text, nullable=True)
-    lease_relevant = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    report = relationship("DarReport", back_populates="incidents")
-
-
 class Approval(Base):
     """One case waiting on a human decision.
 
-    Previously this queue was seeded in the frontend, which meant it could not be
-    grouped, counted per workflow, or survive a reload. Rows are created when an
-    analysis comes back `needs_human_review`/`reject`, and when a DAR unit triages
-    to escalate — the latter is what feeds a red-flagged unit into Breach Notice.
+    Rows are created when a run cannot clear on its own: a document analysis
+    comes back `needs_human_review`/`reject`, or the run's decision step finds
+    required documents missing. Nothing is ever cleared by the agent alone.
     """
 
     __tablename__ = "approvals"
@@ -122,41 +77,49 @@ class Approval(Base):
     found_documents = Column(Text, nullable=True)  # newline-delimited
     missing_documents = Column(Text, nullable=True)  # newline-delimited
     status = Column(String, nullable=False, default="pending", index=True)
-    source = Column(String, nullable=False, default="analysis")  # analysis | dar | sample
+    source = Column(String, nullable=False, default="analysis")  # analysis | run | sample
     raised_at = Column(DateTime, default=datetime.utcnow, index=True)
     resolved_at = Column(DateTime, nullable=True)
     resolved_by = Column(String, nullable=True)
 
 
-class WorkflowSop(Base):
-    """Standing instructions for one workflow — the persistent reference doc.
+class WorkflowStep(Base):
+    """One node of one workflow's definition — the single source of truth.
 
-    This is what the agent is meant to do every time the workflow runs: inputs it
-    expects, steps it takes, how it decides pass/fail, and when it escalates. It
-    lives in the database rather than in code so a division head can edit it from
-    the Workflows page without a deploy.
+    The use case page renders three views of this table and nothing else: the
+    colour-coded diagram on the left, the narrative walkthrough on the right,
+    and the status track the run walks through. Editing the narrative rewrites
+    these rows, so the picture, the words and the execution cannot drift apart.
+
+    Rows are seeded from workflow_repo.DEFAULT_STEPS on first read, then owned by
+    whoever edits them — changing a workflow does not mean changing code.
     """
 
-    __tablename__ = "workflow_sops"
+    __tablename__ = "workflow_steps"
 
     id = Column(Integer, primary_key=True, index=True)
     workflow_id = Column(String, nullable=False, index=True)
     division = Column(Enum(Division), nullable=False, index=True)
-    inputs_expected = Column(Text, nullable=True)
-    steps_taken = Column(Text, nullable=True)
-    pass_fail_logic = Column(Text, nullable=True)
-    escalation_rules = Column(Text, nullable=True)
+    position = Column(Integer, nullable=False, default=0)
+    key = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    # Drives both the node colour in the diagram and what the runner does at
+    # this step: intake | analysis | decision | human | record | note.
+    kind = Column(String, nullable=False, default="note")
+    summary = Column(Text, nullable=True)
+    bullets = Column(Text, nullable=True)  # newline-delimited
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = Column(String, nullable=True)
 
-    __table_args__ = (UniqueConstraint("workflow_id", "division", name="uq_sop_workflow_division"),)
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "division", "key", name="uq_step_workflow_division_key"),
+    )
 
 
 class WorkflowRecord(Base):
     """One logged row of record-keeping for a workflow run.
 
-    The Workflows mini-dashboard reports "rows logged / last updated" off this
-    table, and the same rows export as the workflow's record file.
+    Every run ends here, and the same rows export as the workflow's record file.
     """
 
     __tablename__ = "workflow_records"
@@ -172,17 +135,3 @@ class WorkflowRecord(Base):
     document_name = Column(String, nullable=True)
     recorded_by = Column(String, nullable=True)
     recorded_at = Column(DateTime, default=datetime.utcnow, index=True)
-
-
-class BreachLog(Base):
-    __tablename__ = "breach_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    lease_id = Column(Integer, ForeignKey("leases.id"), nullable=False)
-    breach_type = Column(String, nullable=False)
-    description = Column(Text, nullable=False)
-    reported_at = Column(DateTime, default=datetime.utcnow)
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-
-    lease = relationship("Lease")
-    reporter = relationship("User")

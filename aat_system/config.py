@@ -30,7 +30,7 @@ class Permission(str, Enum):
     UPLOAD_DOCUMENTS = "upload_documents"
     RUN_WORKFLOW = "run_workflow"
     APPROVE_WORKFLOW = "approve_workflow"
-    EDIT_SOP = "edit_sop"
+    EDIT_WORKFLOW = "edit_workflow"
     DELETE_RECORDS = "delete_records"
     MANAGE_USERS = "manage_users"
     MANAGE_ROLES = "manage_roles"
@@ -43,7 +43,7 @@ PERMISSION_LABELS = {
     Permission.UPLOAD_DOCUMENTS: "Upload documents",
     Permission.RUN_WORKFLOW: "Run workflows",
     Permission.APPROVE_WORKFLOW: "Approve and sign off",
-    Permission.EDIT_SOP: "Edit standing instructions",
+    Permission.EDIT_WORKFLOW: "Edit workflow definitions",
     Permission.DELETE_RECORDS: "Delete records and reports",
     Permission.MANAGE_USERS: "Manage users",
     Permission.MANAGE_ROLES: "Assign roles",
@@ -76,10 +76,10 @@ ROLE_LABELS = {
 
 ROLE_DESCRIPTIONS = {
     Role.SUPER_USER: "Unrestricted. Manages roles and permissions across every division.",
-    Role.ADMIN: "Manages users and roles within their division, and can edit standing instructions.",
+    Role.ADMIN: "Manages users and roles within their division, and can edit workflow definitions.",
     Role.DIVISION_HEAD: "Full access to every workflow and folder in their division, including sign-off.",
     Role.SUBGROUP_OWNER: "Access limited to assigned folders; can run workflows and upload, but not sign off.",
-    Role.REVIEWER: "Reads and approves what the agent queues; cannot upload or change instructions.",
+    Role.REVIEWER: "Reads and approves what the agent queues; cannot upload or change definitions.",
     Role.AGENT: "Runs workflows and uploads documents. Every outcome goes to a human for sign-off.",
 }
 
@@ -96,7 +96,7 @@ ROLE_PERMISSIONS = {
         Permission.UPLOAD_DOCUMENTS,
         Permission.RUN_WORKFLOW,
         Permission.APPROVE_WORKFLOW,
-        Permission.EDIT_SOP,
+        Permission.EDIT_WORKFLOW,
         Permission.DELETE_RECORDS,
         Permission.MANAGE_USERS,
         Permission.MANAGE_ROLES,
@@ -107,7 +107,7 @@ ROLE_PERMISSIONS = {
         Permission.UPLOAD_DOCUMENTS,
         Permission.RUN_WORKFLOW,
         Permission.APPROVE_WORKFLOW,
-        Permission.EDIT_SOP,
+        Permission.EDIT_WORKFLOW,
         Permission.DELETE_RECORDS,
     ],
     Role.SUBGROUP_OWNER: [
@@ -161,23 +161,9 @@ REDACTION_PATTERNS = [
     r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",  # email addresses
 ]
 
-EMAIL_FOLDER_KEYWORDS = {
-    "Vendor Insurances": ["vendor insurance", "certificate of insurance"],
-    "Renters Insurance": ["renters insurance", "renter's insurance", "tenant insurance"],
-    "Lease Agreements": ["lease agreement", "lease", "rental agreement"],
-    "Checklists": ["checklist", "file checklist"],
-    "Breach Agreement Notices": ["breach notice", "notice of breach", "lease breach"],
-    "Daily Activity Reports": ["daily activity report", "activity report"],
-    "AAT Company Requirements/Documents": ["aat company", "company requirements", "aat requirements"],
-}
-
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///aat_system.db")
 SECRET_KEY = os.getenv("SECRET_KEY", "replace-with-a-secure-random-string")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-IMAP_HOST = os.getenv("IMAP_HOST", "imap.example.com")
-IMAP_USER = os.getenv("IMAP_USER", "placeholder@example.com")
-IMAP_PASSWORD = os.getenv("IMAP_PASSWORD", "password")
-IMAP_FOLDER = os.getenv("IMAP_FOLDER", "INBOX")
 SERVICE_API_KEY = os.getenv("SERVICE_API_KEY", "")
 UPLOAD_ROOT = Path(os.getenv("UPLOAD_ROOT", "uploaded_files"))
 REDACTED_ROOT = Path(os.getenv("REDACTED_ROOT", "redacted_files"))

@@ -116,7 +116,7 @@ def profile(user: User) -> dict:
         ],
         "allowed_folders": get_allowed_folders(user),
         "can_manage_users": Permission.MANAGE_USERS.value in granted,
-        "can_edit_sop": Permission.EDIT_SOP.value in granted,
+        "can_edit_workflow": Permission.EDIT_WORKFLOW.value in granted,
         "can_approve": Permission.APPROVE_WORKFLOW.value in granted,
     }
 

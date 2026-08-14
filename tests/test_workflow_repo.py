@@ -1,8 +1,8 @@
-"""Tests for the workflow catalog, standing instructions, and record-keeping.
+"""Tests for the workflow catalog, definitions, and record-keeping.
 
-Covers the three things the Workflows page reads: the required-document
-checklist (is present/missing actually derived from the repository?), the SOP
-seed-and-edit cycle, and the record summary the mini-dashboard reports.
+The definition is the single source of truth behind the diagram, the narrative
+and the run, so these cover the seed-edit-reset cycle and the required-document
+check the run's intake step depends on.
 
     python -m pytest tests/ -q
 """
@@ -52,7 +52,7 @@ def add_document(db, folder_name, filename, division=MF):
 
 # ---------------- Catalog ----------------
 
-def test_catalog_covers_every_phase_one_workflow():
+def test_catalog_covers_every_phase_one_use_case():
     ids = {w["id"] for w in workflow_repo.catalog()}
     assert ids == {
         "vendor-insurance",
@@ -63,11 +63,114 @@ def test_catalog_covers_every_phase_one_workflow():
     }
 
 
-def test_every_workflow_ships_default_standing_instructions():
+def test_every_use_case_ships_a_definition_the_runner_understands():
     for wf_id in workflow_repo.WORKFLOW_CATALOG:
-        defaults = workflow_repo.DEFAULT_SOPS[wf_id]
-        for field in workflow_repo.SOP_FIELDS:
-            assert defaults.get(field), f"{wf_id} has no {field}"
+        steps = workflow_repo.DEFAULT_STEPS[wf_id]
+        assert steps, f"{wf_id} ships no steps"
+        for step in steps:
+            assert step["title"] and step["summary"] and step["bullets"]
+            assert step["kind"] in workflow_repo.STEP_KINDS
+
+        # Every shipped use case ends with a person and a record, because that
+        # is the human-in-the-loop rule the whole system is built on.
+        kinds = [s["kind"] for s in steps]
+        assert "human" in kinds, f"{wf_id} never reaches a human"
+        assert kinds[-1] == "record", f"{wf_id} does not end by recording the run"
+
+
+def test_catalog_titles_and_purposes_are_present():
+    for entry in workflow_repo.catalog():
+        assert entry["title"] and entry["purpose"] and entry["folder"]
+
+
+# ---------------- Definitions ----------------
+
+def test_definition_seeds_the_shipped_steps_on_first_read(db):
+    definition = workflow_repo.get_definition(db, "breach-notice", MF)
+    assert definition["is_default"] is True
+    assert [s["title"] for s in definition["steps"]] == [
+        s["title"] for s in workflow_repo.DEFAULT_STEPS["breach-notice"]
+    ]
+    assert definition["steps"][0]["position"] == 0
+    assert definition["steps"][0]["key"]  # a stable slug the run reports against
+
+
+def test_reading_twice_does_not_duplicate_steps(db):
+    first = workflow_repo.get_definition(db, "breach-notice", MF)
+    second = workflow_repo.get_definition(db, "breach-notice", MF)
+    assert len(first["steps"]) == len(second["steps"])
+
+
+def test_editing_the_narrative_rewrites_the_definition(db):
+    workflow_repo.get_definition(db, "vendor-insurance", MF)
+    updated = workflow_repo.update_definition(
+        db,
+        "vendor-insurance",
+        MF,
+        [
+            {"title": "Collect", "kind": "intake", "summary": "Get the COI.", "bullets": ["From the folder."]},
+            {"title": "Decide", "kind": "decision", "summary": "Pass or fail.", "bullets": []},
+            {"title": "File", "kind": "record", "summary": "Write it down.", "bullets": []},
+        ],
+        updated_by="Jordan",
+    )
+
+    assert [s["title"] for s in updated["steps"]] == ["Collect", "Decide", "File"]
+    assert updated["steps"][0]["bullets"] == ["From the folder."]
+    assert updated["is_default"] is False
+    assert updated["updated_by"] == "Jordan"
+
+    # The removed steps are gone, not merely hidden — the run walks this list.
+    assert len(workflow_repo.get_definition(db, "vendor-insurance", MF)["steps"]) == 3
+
+
+def test_step_keys_stay_unique_when_titles_repeat(db):
+    definition = workflow_repo.update_definition(
+        db,
+        "vendor-insurance",
+        MF,
+        [
+            {"title": "Review", "kind": "analysis", "summary": "", "bullets": []},
+            {"title": "Review", "kind": "decision", "summary": "", "bullets": []},
+        ],
+    )
+    keys = [s["key"] for s in definition["steps"]]
+    assert len(set(keys)) == 2
+
+
+def test_an_unknown_kind_falls_back_to_note(db):
+    definition = workflow_repo.update_definition(
+        db, "vendor-insurance", MF, [{"title": "Ponder", "kind": "wizardry", "summary": "", "bullets": []}]
+    )
+    assert definition["steps"][0]["kind"] == "note"
+
+
+def test_a_definition_cannot_be_emptied(db):
+    with pytest.raises(ValueError):
+        workflow_repo.update_definition(db, "vendor-insurance", MF, [])
+
+
+def test_reset_restores_the_shipped_definition(db):
+    workflow_repo.update_definition(
+        db, "breach-notice", MF, [{"title": "Only step", "kind": "note", "summary": "", "bullets": []}]
+    )
+    restored = workflow_repo.reset_definition(db, "breach-notice", MF, updated_by="Jordan")
+    assert restored["is_default"] is True
+    assert len(restored["steps"]) == len(workflow_repo.DEFAULT_STEPS["breach-notice"])
+
+
+def test_definitions_are_per_division(db):
+    workflow_repo.update_definition(
+        db, "breach-notice", MF, [{"title": "Multifamily only", "kind": "note", "summary": "", "bullets": []}]
+    )
+    office = workflow_repo.get_definition(db, "breach-notice", Division.OFFICE)
+    assert office["is_default"] is True
+    assert office["steps"][0]["title"] != "Multifamily only"
+
+
+def test_unknown_workflow_is_rejected(db):
+    with pytest.raises(ValueError):
+        workflow_repo.get_definition(db, "not-a-workflow", MF)
 
 
 # ---------------- Required documents ----------------
@@ -95,8 +198,7 @@ def test_a_matching_filename_marks_a_document_present(db):
 def test_a_document_in_the_wrong_folder_does_not_count(db):
     # A file named like the requirements doc, filed under leases, must not satisfy it.
     add_document(db, "Lease Agreements", "aat-requirements.pdf")
-    checked = workflow_repo.required_documents(db, "vendor-insurance", MF)
-    assert checked["present"] == 0
+    assert workflow_repo.required_documents(db, "vendor-insurance", MF)["present"] == 0
 
 
 def test_required_documents_are_scoped_by_division(db):
@@ -105,49 +207,10 @@ def test_required_documents_are_scoped_by_division(db):
     assert workflow_repo.required_documents(db, "vendor-insurance", Division.OFFICE)["present"] == 1
 
 
-def test_unknown_workflow_is_rejected(db):
-    with pytest.raises(ValueError):
-        workflow_repo.required_documents(db, "not-a-workflow", MF)
-
-
-# ---------------- Standing instructions ----------------
-
-def test_sop_seeds_defaults_on_first_read_and_is_marked_default(db):
-    sop = workflow_repo.get_sop(db, "breach-notice", MF)
-    assert sop["is_default"] is True
-    assert "lease section" in sop["pass_fail_logic"].lower()
-
-
-def test_editing_one_field_leaves_the_others_alone(db):
-    original = workflow_repo.get_sop(db, "breach-notice", MF)
-    edited = workflow_repo.update_sop(
-        db, "breach-notice", MF, {"escalation_rules": "Escalate everything."}, updated_by="Jordan"
-    )
-    assert edited["escalation_rules"] == "Escalate everything."
-    assert edited["steps_taken"] == original["steps_taken"]
-    assert edited["is_default"] is False
-    assert edited["updated_by"] == "Jordan"
-
-
-def test_reset_restores_the_shipped_defaults(db):
-    workflow_repo.update_sop(db, "breach-notice", MF, {"escalation_rules": "junk"})
-    restored = workflow_repo.reset_sop(db, "breach-notice", MF, updated_by="Jordan")
-    assert restored["is_default"] is True
-    assert restored["escalation_rules"] == workflow_repo.DEFAULT_SOPS["breach-notice"]["escalation_rules"]
-
-
-def test_sops_are_per_division(db):
-    workflow_repo.update_sop(db, "breach-notice", MF, {"escalation_rules": "Multifamily rule."})
-    office = workflow_repo.get_sop(db, "breach-notice", Division.OFFICE)
-    assert office["is_default"] is True
-    assert office["escalation_rules"] != "Multifamily rule."
-
-
 # ---------------- Records ----------------
 
 def test_record_summary_is_empty_before_anything_is_logged(db):
-    summary = workflow_repo.record_summary(db, "vendor-insurance", MF)
-    assert summary == {
+    assert workflow_repo.record_summary(db, "vendor-insurance", MF) == {
         "rows_logged": 0,
         "last_updated": None,
         "last_updated_by": None,
@@ -157,26 +220,25 @@ def test_record_summary_is_empty_before_anything_is_logged(db):
 
 
 def test_logging_records_updates_the_summary(db):
-    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="signed_off", recorded_by="Avery")
-    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="sent_back", recorded_by="Avery")
-    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="signed_off", subject="COI", recorded_by="Jordan")
+    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="cleared", recorded_by="Avery")
+    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="queued_for_review", recorded_by="Avery")
+    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="cleared", subject="COI", recorded_by="Jordan")
 
     summary = workflow_repo.record_summary(db, "vendor-insurance", MF)
     assert summary["rows_logged"] == 3
-    assert summary["by_outcome"] == {"signed_off": 2, "sent_back": 1}
+    assert summary["by_outcome"] == {"cleared": 2, "queued_for_review": 1}
     assert summary["last_updated_by"] == "Jordan"
     assert summary["last_subject"] == "COI"
 
 
 def test_records_do_not_leak_between_workflows(db):
-    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="signed_off")
+    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="cleared")
     assert workflow_repo.record_summary(db, "breach-notice", MF)["rows_logged"] == 0
 
 
 def test_records_csv_has_a_header_and_one_row_per_record(db):
-    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="signed_off", property_id="RES-014", unit="3B")
-    body = workflow_repo.records_csv(db, "vendor-insurance", MF)
-    lines = [line for line in body.strip().splitlines() if line]
+    workflow_repo.log_record(db, "vendor-insurance", MF, outcome="cleared", property_id="RES-014", unit="3B")
+    lines = [line for line in workflow_repo.records_csv(db, "vendor-insurance", MF).strip().splitlines() if line]
     assert lines[0].startswith("Recorded at,")
     assert len(lines) == 2
     assert "RES-014" in lines[1]
@@ -203,8 +265,7 @@ def test_pending_counts_group_by_workflow(db):
     approval_repo.create(db, "vendor-insurance", MF, subject="B")
     approval_repo.create(db, "breach-notice", MF, subject="C")
 
-    counts = approval_repo.pending_counts(db, MF)
-    assert counts == {"vendor-insurance": 2, "breach-notice": 1}
+    assert approval_repo.pending_counts(db, MF) == {"vendor-insurance": 2, "breach-notice": 1}
 
 
 def test_resolving_removes_a_case_from_the_pending_queue(db):
@@ -227,8 +288,7 @@ def test_dedupe_stops_the_same_unit_being_raised_twice(db):
 def test_a_resolved_unit_can_be_raised_again_later(db):
     first = approval_repo.create(db, "breach-notice", MF, subject="Unit 8C", unit="8C", dedupe=True)
     approval_repo.resolve(db, first.id, "approved")
-    again = approval_repo.create(db, "breach-notice", MF, subject="Unit 8C recurs", unit="8C", dedupe=True)
-    assert again is not None
+    assert approval_repo.create(db, "breach-notice", MF, subject="Unit 8C recurs", unit="8C", dedupe=True) is not None
 
 
 def test_samples_seed_once_and_clear_cleanly(db):
@@ -236,11 +296,8 @@ def test_samples_seed_once_and_clear_cleanly(db):
     assert approval_repo.seed_samples(db, MF) == 0  # already populated
 
     real = approval_repo.create(db, "vendor-insurance", MF, subject="Real case", source="analysis")
-    removed = approval_repo.clear_samples(db, MF)
-    assert removed == len(approval_repo.SAMPLE_APPROVALS)
-
-    remaining = approval_repo.list_pending(db, MF)
-    assert [a["id"] for a in remaining] == [real.id]
+    assert approval_repo.clear_samples(db, MF) == len(approval_repo.SAMPLE_APPROVALS)
+    assert [a["id"] for a in approval_repo.list_pending(db, MF)] == [real.id]
 
 
 def test_approvals_are_scoped_by_division(db):
