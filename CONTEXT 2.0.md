@@ -260,12 +260,33 @@ the catalog, the human step writes a real `approvals` row (deduped to one open
 case per property/unit), and the record step writes a real `workflow_records`
 row. A run that cannot clear still finishes, still queues, and still records.
 
-### LLM document analysis — real, working
+### LLM document analysis — real, working, two routes
 `aat_system/llm_analyzer.py` is where review decisions are actually made. A document
-attached to a run (PDF, image, or text) is sent to Claude and graded against the rubric
-for its workflow. The response shape is enforced by the API through structured outputs
-against a Pydantic schema, so it always parses — there is no "please return JSON"
-prompting, no regex extraction, and no retry-on-parse-failure loop.
+attached to a run is graded against the rubric for its workflow, and the verdict is
+returned as a validated `DocumentVerdict` — no "please return JSON" prompting, no regex
+extraction, no retry-on-parse-failure loop.
+
+`LLM_PROVIDER` picks the route, and it is the only thing that changes:
+
+| | `tritonai` (default) | `anthropic` |
+| --- | --- | --- |
+| Reaches | UCSD's OpenAI-compatible proxy via `aat_system/connect.py` | the Anthropic SDK directly |
+| Model | `TRITONAI_MODEL`, default `claude-opus-4-6-v1` | `ANTHROPIC_MODEL`, default `claude-opus-5` |
+| Key | `TRITONAI_API_KEY` | `ANTHROPIC_API_KEY` |
+| Schema | JSON mode + schema hint, validated locally by Pydantic | enforced by the API's structured outputs |
+| Reads | text, and PDFs via local `pypdf` extraction | PDFs and images natively |
+
+The asymmetry is stated in the module docstring and surfaced in the run footer rather
+than left to be discovered mid-run: on the TritonAI route an image, or a scanned PDF
+with no extractable text, is **refused with the fix in the message** ("set
+`LLM_PROVIDER=anthropic`") rather than graded on an empty document.
+
+`aat_system/connect.py` is TritonAI's own portable client, copied verbatim from
+`TRITONAI_SETUP.md` — the only edits its contract permits are `DEFAULT_MODEL` and,
+because it lives in the package rather than a top-level `utils/`, the `oauth_gpt`
+import path. Every model call goes through it: no second client, no `openai.OpenAI()`
+in feature code. Neither route retries on a different model, which is deliberate —
+an unknown or unauthorised model raises and the run reports it.
 
 Each of the five Phase 1 workflows carries a concrete rubric (`WORKFLOW_RUBRICS`). For
 every requirement the model returns `met` / `not_met` / `unclear` plus a supporting quote
@@ -449,13 +470,20 @@ expands into a searchable document list, and the approvals queue grouped by use 
 each file's mtime, so a browser cannot mix an old `app.js` with a new `index.html`.
 
 ### Configuration
-`ANTHROPIC_API_KEY` is required to grade an attached document; `ANTHROPIC_MODEL` defaults
-to `claude-opus-5`. See `.env.example`. Without a credential the dashboard and the run
-footer both say so up front, attaching a file returns 503 with an actionable message, and
-a run with no attachment still works — it reports on what is already on file.
+`LLM_PROVIDER` selects the route (`tritonai` by default, or `anthropic`), and the active
+route's key is what has to be present to grade an attached document: `TRITONAI_API_KEY`
+(generated with a UCSD login at <https://tritonai-api.ucsd.edu/>) or
+`ANTHROPIC_API_KEY`. See `.env.example`.
+
+Credential checks are per route, so an Anthropic key does not make the TritonAI route
+look usable. The placeholders shipped in `.env.example` are treated as absent — they are
+non-empty strings that would otherwise report "configured" until the proxy rejects them
+mid-run. Without a usable credential the dashboard and the run footer both name the
+missing variable up front, attaching a file returns 503 with the variable in the message,
+and a run with no attachment still works — it reports on what is already on file.
 
 ### Testing
-`python -m pytest tests/ -q` — 81 tests, no API key required and no model call made.
+`python -m pytest tests/ -q` — 92 tests, no API key required and no model call made.
 Coverage is on the definition seed/edit/reset cycle, revision history and rollback
 (including that a rollback is a new version and that the bad edit stays on the record),
 the required-document check, records and the approvals queue (`test_workflow_repo.py`),
@@ -466,6 +494,13 @@ divisions by default, that a super admin is refused another division's work and 
 that granting Construction's general users a permission leaves Residential's alone, that a
 level stripped to nothing stays stripped, that resetting one division does not reset
 another, and that every division has its own account at every level.
+
+`test_llm_route.py` covers which route a decision takes: that TritonAI is the default,
+that the model the UI reports follows the provider, that each route checks its own key and
+treats the shipped placeholder as absent, that the TritonAI call asks for a validated
+schema at temperature 0 with both the rubric and the document in the prompt, and that an
+image or a text-free PDF is refused with a way forward rather than graded blind. The model
+call is stubbed — a test that reached UCSD's proxy would be a different kind of test.
 
 Sample documents in `sample_docs/`:
 

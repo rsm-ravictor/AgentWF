@@ -355,9 +355,10 @@
     qs('#dashboard-subtitle').textContent = `${divisionLabels[state.division]} — ${data.use_cases.length} use cases, ${data.documents_total} documents on file.`;
 
     qs('#stat-usecases').textContent = data.use_cases.length;
+    const dashRoute = data.llm_route || {};
     qs('#stat-usecases-note').textContent = data.analysis_configured
-      ? 'document grading is live'
-      : 'no API key — grading disabled';
+      ? `grading live via ${dashRoute.provider === 'tritonai' ? 'TritonAI' : 'Anthropic'}`
+      : `no ${dashRoute.key_env || 'API'} key — grading disabled`;
     qs('#stat-documents').textContent = data.documents_total;
     qs('#stat-leases').textContent = data.leases_expiring_soon;
     qs('#stat-pending').textContent = data.approvals.length;
@@ -1101,10 +1102,21 @@
     const detail = state.workflow.detail;
     const parts = [];
     if (!can('run_workflow')) parts.push('Your role cannot start a run.');
+    // Name the route, not just the model: which service the decision is made
+    // through is the part someone needs when a key is missing.
+    const route = detail.llm_route || { key_env: 'ANTHROPIC_API_KEY', provider: 'anthropic' };
+    const via = route.provider === 'tritonai' ? 'TritonAI' : 'Anthropic';
     if (!detail.analysis_configured) {
-      parts.push('ANTHROPIC_API_KEY is not set, so an attached document cannot be graded.');
+      parts.push(
+        `${route.key_env} is not set, so an attached document cannot be graded through ${via}.`
+      );
     } else {
-      parts.push(`Attach a document to grade it against this use case's rubric with ${detail.model}.`);
+      parts.push(
+        `Attach a document to grade it against this use case's rubric — ${detail.model} via ${via}.`
+      );
+    }
+    if (route.provider === 'tritonai') {
+      parts.push('This route reads text and text-based PDFs; scans and images need the Anthropic route.');
     }
     parts.push('Runs without an attachment report on what is already on file.');
     qs('#run-hint').textContent = parts.join(' ');

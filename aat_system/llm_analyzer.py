@@ -1,20 +1,42 @@
 """LLM-backed document analysis.
 
-Sends an uploaded document to Claude and gets back a structured, machine-readable
-verdict (approve / needs human review / reject) plus per-requirement findings.
+Sends an uploaded document to a model and gets back a structured,
+machine-readable verdict (approve / needs human review / reject) plus
+per-requirement findings. This is where a use case's decision is actually made.
 
-The schema is enforced by the API via structured outputs, so the response is
-always valid against DocumentVerdict — no prompt-level "please return JSON".
+Two routes, chosen by ``LLM_PROVIDER``:
+
+* ``tritonai`` (default) — UCSD's OpenAI-compatible proxy, via
+  ``aat_system.connect``. One entry point for every model it offers; switching
+  models is the ``TRITONAI_MODEL`` env var and nothing else.
+* ``anthropic`` — the direct Anthropic SDK path this started on.
+
+They are not interchangeable in one respect worth knowing, so it is stated here
+rather than discovered mid-run: the Anthropic route enforces the response schema
+through the API's structured outputs, and reads PDFs and images natively. The
+TritonAI route is a text chat completion, so the schema is enforced by JSON mode
+plus a schema hint and then validated locally, and a document has to be text by
+the time it is sent — PDFs are extracted here, images cannot be.
 """
 
 import base64
+import io
 import os
 from typing import List, Literal, Optional
 
 import anthropic
 from pydantic import BaseModel, Field
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+from . import connect
+
+# Which route a run's analysis step takes. TritonAI by default.
+PROVIDER = os.getenv("LLM_PROVIDER", "tritonai").strip().lower()
+
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+TRITONAI_MODEL = os.getenv("TRITONAI_MODEL", connect.DEFAULT_MODEL)
+
+# The model actually in use, for the dashboard and the run footer to report.
+MODEL = TRITONAI_MODEL if PROVIDER == "tritonai" else ANTHROPIC_MODEL
 
 # Requirements each workflow checks a document against. These are the rubric the
 # model grades against — keep them concrete and checkable.
@@ -142,15 +164,26 @@ def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic()
 
 
-def has_api_key() -> bool:
-    """Whether a usable credential resolved, so the UI can warn before a run.
+def _usable(value: Optional[str]) -> bool:
+    """Whether a credential string is real rather than a shipped placeholder.
 
-    The client constructor does not raise on missing credentials — it fails at
-    request time — so inspect the resolved values rather than construction.
-    The placeholder shipped in .env.example is treated as absent: it resolves to
-    a non-empty string, which would otherwise report "configured" right up until
-    the API rejects it mid-run.
+    The placeholders in .env.example resolve to non-empty strings, which would
+    otherwise report "configured" right up until the API rejects them mid-run.
     """
+    return bool(value) and "replace-with" not in value
+
+
+def has_api_key() -> bool:
+    """Whether the active provider has a usable credential.
+
+    Checked so the dashboard and the run footer can say so up front rather than
+    failing halfway through a run.
+    """
+    if PROVIDER == "tritonai":
+        return _usable(os.getenv("TRITONAI_API_KEY"))
+
+    # The Anthropic client constructor does not raise on missing credentials —
+    # it fails at request time — so inspect the resolved values instead.
     try:
         client = _client()
     except Exception:
@@ -162,7 +195,17 @@ def has_api_key() -> bool:
         or os.getenv("ANTHROPIC_AUTH_TOKEN")
         or ""
     )
-    return bool(resolved) and "replace-with" not in resolved
+    return _usable(resolved)
+
+
+def active_route() -> dict:
+    """What the UI reports about where decisions are being made."""
+    return {
+        "provider": PROVIDER,
+        "model": MODEL,
+        "configured": has_api_key(),
+        "key_env": "TRITONAI_API_KEY" if PROVIDER == "tritonai" else "ANTHROPIC_API_KEY",
+    }
 
 
 def _document_block(file_bytes: bytes, media_type: str) -> dict:
@@ -190,6 +233,52 @@ def _document_block(file_bytes: bytes, media_type: str) -> dict:
     return {"type": "text", "text": f"<document>\n{text}\n</document>"}
 
 
+def _document_text(file_bytes: bytes, media_type: str, filename: str) -> str:
+    """The document as text, for a route that can only take text.
+
+    PDFs are extracted with pypdf, which is already a dependency for redaction.
+    Images raise: there is no OCR on this path, and silently grading a document
+    the model never actually read would be worse than refusing.
+    """
+    if media_type == "application/pdf":
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(file_bytes))
+        pages = [(page.extract_text() or "").strip() for page in reader.pages]
+        text = "\n\n".join(p for p in pages if p)
+        if not text:
+            raise RuntimeError(
+                f"No text could be extracted from {filename}. It is likely a scanned "
+                "image inside a PDF, which this route cannot read — set "
+                "LLM_PROVIDER=anthropic to grade it, or upload a text-based copy."
+            )
+        return text
+
+    if media_type.startswith("image/"):
+        raise RuntimeError(
+            f"{filename} is an image, and the TritonAI route sends text only. Set "
+            "LLM_PROVIDER=anthropic to grade images, or upload a PDF or text copy."
+        )
+
+    return file_bytes.decode("utf-8", errors="replace")
+
+
+def _instructions(rubric: dict, filename: str, property_id: Optional[str], unit_id: Optional[str]) -> str:
+    requirements = "\n".join(f"{i}. {r}" for i, r in enumerate(rubric["requirements"], 1))
+    context_lines = [f"Workflow: {rubric['title']}", f"Uploaded file: {filename}"]
+    if property_id:
+        context_lines.append(f"Property ID on file: {property_id}")
+    if unit_id:
+        context_lines.append(f"Unit on file: {unit_id}")
+
+    return (
+        "\n".join(context_lines)
+        + f"\n\nThis workflow expects: {rubric['document_kinds']}."
+        + f"\n\nGrade the attached document against these requirements:\n{requirements}\n\n"
+        "Return one finding per numbered requirement, in order."
+    )
+
+
 def analyze_document(
     workflow_id: str,
     file_bytes: bytes,
@@ -200,29 +289,48 @@ def analyze_document(
 ) -> DocumentVerdict:
     """Grade one document against a workflow's rubric.
 
-    Raises ValueError for an unknown workflow, and lets anthropic.* errors
-    propagate so the API layer can map them to status codes.
+    Routes through TritonAI or Anthropic depending on ``LLM_PROVIDER``. Raises
+    ValueError for an unknown workflow, and lets provider errors propagate so the
+    API layer can map them to status codes — neither route retries on another
+    model, which is deliberate.
     """
     rubric = WORKFLOW_RUBRICS.get(workflow_id)
     if rubric is None:
         raise ValueError(f"Unknown workflow: {workflow_id}")
 
-    requirements = "\n".join(f"{i}. {r}" for i, r in enumerate(rubric["requirements"], 1))
-    context_lines = [f"Workflow: {rubric['title']}", f"Uploaded file: {filename}"]
-    if property_id:
-        context_lines.append(f"Property ID on file: {property_id}")
-    if unit_id:
-        context_lines.append(f"Unit on file: {unit_id}")
+    instructions = _instructions(rubric, filename, property_id, unit_id)
 
-    instructions = (
-        "\n".join(context_lines)
-        + f"\n\nThis workflow expects: {rubric['document_kinds']}."
-        + f"\n\nGrade the attached document against these requirements:\n{requirements}\n\n"
-        "Return one finding per numbered requirement, in order."
+    if PROVIDER == "tritonai":
+        return _analyze_via_tritonai(file_bytes, media_type, filename, instructions)
+    return _analyze_via_anthropic(file_bytes, media_type, instructions)
+
+
+def _analyze_via_tritonai(
+    file_bytes: bytes, media_type: str, filename: str, instructions: str
+) -> DocumentVerdict:
+    """Grade through TritonAI's proxy.
+
+    Text-only, so the document is inlined. The schema round-trips as JSON mode
+    plus a schema hint and is validated by Pydantic on the way back, so a
+    malformed reply raises here rather than reaching the UI half-formed.
+    """
+    document = _document_text(file_bytes, media_type, filename)
+    prompt = f"<document name=\"{filename}\">\n{document}\n</document>\n\n{instructions}"
+
+    return connect.ask_json(
+        prompt,
+        schema=DocumentVerdict,
+        model=TRITONAI_MODEL,
+        system=SYSTEM_PROMPT,
+        temperature=0,
+        max_tokens=16000,
     )
 
+
+def _analyze_via_anthropic(file_bytes: bytes, media_type: str, instructions: str) -> DocumentVerdict:
+    """Grade through the Anthropic SDK, which reads PDFs and images natively."""
     response = _client().messages.parse(
-        model=MODEL,
+        model=ANTHROPIC_MODEL,
         max_tokens=16000,
         system=SYSTEM_PROMPT,
         messages=[

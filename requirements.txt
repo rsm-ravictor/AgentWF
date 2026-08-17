@@ -8,6 +8,7 @@ passlib==1.7.4  # pbkdf2_sha256 only; passlib 1.7.4 cannot drive bcrypt >= 4.1
 pypdf==4.3.1
 python-multipart==0.0.6
 anthropic>=0.75.0
+openai>=1.40        # TritonAI's proxy is OpenAI-compatible; see aat_system/connect.py
 
 # Dev / test only
 pytest>=8.0.0

@@ -83,7 +83,8 @@ does when it reaches it:
 - `aat_system/models.py` — users, folders, documents, leases, approvals, workflow steps, revisions and records.
 - `aat_system/workflow_repo.py` — the use case catalog, definitions, revision history, required documents, records, glossary.
 - `aat_system/workflow_runner.py` — executes a use case step by step, yielding one event per state change.
-- `aat_system/llm_analyzer.py` — per-workflow rubrics and the structured-output call to Claude.
+- `aat_system/llm_analyzer.py` — per-workflow rubrics and the graded verdict behind each decision.
+- `aat_system/connect.py` — the one LLM entry point: TritonAI's OpenAI-compatible proxy (`ask`, `ask_json`, `list_models`).
 - `aat_system/approval_repo.py` — the human-in-the-loop queue.
 - `aat_system/user_repo.py`, `auth.py`, `security.py` — roster, role scope, tokens.
 - `aat_system/permission_repo.py` — what each role grants, editable at runtime by the Permissions page.
@@ -151,7 +152,24 @@ Because the roles changed shape, an `aat_system.db` from before this change stor
 level names that no longer exist. Delete the file and let startup rebuild it.
 
 Without an API key the app still runs: a run with no attachment reports on what
-is already on file, and the UI says up front that grading is unavailable.
+is already on file, and the UI names the missing variable up front.
+
+## Where decisions get made
+
+Attaching a document to a run grades it against that use case's rubric and returns a
+validated verdict — approve / needs human review / reject, with per-requirement
+findings and evidence. `LLM_PROVIDER` chooses the route:
+
+- **`tritonai`** (default) — UCSD's OpenAI-compatible proxy through
+  `aat_system/connect.py`. Needs `TRITONAI_API_KEY` from
+  <https://tritonai-api.ucsd.edu/>; the model is `TRITONAI_MODEL`
+  (`claude-opus-4-6-v1`). Switching models is that one variable. Reads text and
+  text-based PDFs.
+- **`anthropic`** — the Anthropic SDK directly. Needs `ANTHROPIC_API_KEY`. Reads PDFs
+  and images natively and has the API enforce the response schema, so use it for scans.
+
+Every model call goes through `connect.py` — one client, no second path. Neither route
+falls back to another model: an unknown or unauthorised model raises and the run says so.
 
 ## Tests
 

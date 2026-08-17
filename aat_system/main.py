@@ -362,6 +362,9 @@ def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
         "use_cases": use_cases,
         "analysis_configured": llm_analyzer.has_api_key(),
         "model": llm_analyzer.MODEL,
+        # Which route decisions are made through, so the UI names it rather than
+        # implying every model call goes to the same place.
+        "llm_route": llm_analyzer.active_route(),
     }
 
 
@@ -385,6 +388,9 @@ def workflow_detail(workflow_id: str, division: str = "mf", db: Session = Depend
         "rubric": rubric.get("requirements", []),
         "analysis_configured": llm_analyzer.has_api_key(),
         "model": llm_analyzer.MODEL,
+        # Which route decisions are made through, so the UI names it rather than
+        # implying every model call goes to the same place.
+        "llm_route": llm_analyzer.active_route(),
     }
 
 
@@ -450,10 +456,12 @@ async def run_workflow(
         if len(contents) > MAX_RUN_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Attached file is larger than the 20 MB limit.")
         if not llm_analyzer.has_api_key():
+            route = llm_analyzer.active_route()
             raise HTTPException(
                 status_code=503,
-                detail="ANTHROPIC_API_KEY is not set, so an attached document cannot be graded. "
-                "Add it to .env and restart, or run without an attachment.",
+                detail=f"{route['key_env']} is not set, so an attached document cannot be "
+                f"graded through the {route['provider']} route. Add it to .env and restart, "
+                "or run without an attachment.",
             )
         attachment = workflow_runner.Attachment(
             contents, upload_file.filename, upload_file.content_type or "application/octet-stream"
