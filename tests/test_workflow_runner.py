@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from aat_system import approval_repo, workflow_repo, workflow_runner
+from aat_system import approval_repo, workflow_catalog, workflow_repo, workflow_runner
 from aat_system.config import Division, Role
 from aat_system.models import Base, Document, Folder, User
 
@@ -34,6 +34,9 @@ def db(tmp_path):
     session.add(owner)
     session.commit()
     session.owner_id = owner.id
+    # A use case is a row now, not a constant, so the shipped set has to be
+    # seeded here exactly as the app seeds it at startup.
+    workflow_catalog.seed(session, workflow_repo.WORKFLOW_CATALOG)
     yield session
     session.close()
 
@@ -176,7 +179,7 @@ def test_documents_alone_do_not_clear_the_run(db):
 
 
 def test_runs_are_scoped_by_division(db):
-    add_document(db, "Vendor Insurances", "brightline-coi.pdf", division=Division.OFFICE)
+    add_document(db, "Vendor Insurances", "brightline-coi.pdf", division=Division.CONSTRUCTION)
     intake = steps_of(execute(db))[0]
     assert intake["status"] == "blocked"
 

@@ -50,6 +50,10 @@
     settingsSection: 'profiles', // which Settings section is open
     settingsDivision: null, // which division's levels are being configured
     loginAccounts: null, // seeded accounts, fetched once for the login picker
+    // Draft of the use-case form, when one is open. 'create' builds a new
+    // use case; 'settings' edits the open one. Held here rather than read
+    // back out of the DOM so a re-render cannot lose what was typed.
+    useCaseForm: null, // { mode: 'create' | 'settings', documents: [...] }
   };
 
   const can = (permission) => !!(state.profile && state.profile.permissions.includes(permission));
@@ -352,7 +356,13 @@
     const hour = new Date().getHours();
     const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
     qs('#dashboard-greeting').textContent = `${greeting}, ${(state.profile.name || '').split(' ')[0]}`;
-    qs('#dashboard-subtitle').textContent = `${divisionLabels[state.division]} — ${data.use_cases.length} use cases, ${data.documents_total} documents on file.`;
+    const caseCount = data.use_cases.length;
+    qs('#dashboard-subtitle').textContent =
+      `${divisionLabels[state.division]} — ` +
+      (caseCount === 0
+        ? 'no use cases yet'
+        : `${caseCount} use case${caseCount === 1 ? '' : 's'}`) +
+      `, ${data.documents_total} documents on file.`;
 
     qs('#stat-usecases').textContent = data.use_cases.length;
     const dashRoute = data.llm_route || {};
@@ -363,6 +373,10 @@
     qs('#stat-leases').textContent = data.leases_expiring_soon;
     qs('#stat-pending').textContent = data.approvals.length;
 
+    // Authoring is gated on the same permission that gates editing a
+    // definition: shaping what a use case is and what it does are one job.
+    qs('#uc-new').classList.toggle('hidden', !can('edit_workflow'));
+
     renderUseCaseTiles(data.use_cases);
     renderFolders(data.folders);
     renderApprovals(data.approvals);
@@ -371,6 +385,31 @@
   // Every tile is the same shape whatever the use case does — only the logic
   // behind it differs. That is the point of the shared shell.
   function renderUseCaseTiles(useCases) {
+    // A division starts with none — Office/Retail ships empty on purpose — so
+    // the empty grid has to say what to do next rather than just be blank.
+    if (!useCases.length) {
+      qs('#usecase-grid').innerHTML = `
+        <div class="empty-card">
+          <h3>No use cases in ${esc(divisionLabels[state.division] || 'this division')} yet</h3>
+          <p>
+            A use case is the folder it reads, the documents it requires, and the steps it
+            runs. Create one and it starts with a full workflow you then edit — gather,
+            read, decide, hand off, record.
+          </p>
+          ${
+            can('edit_workflow')
+              ? `<button class="btn btn-primary btn-sm" data-new-usecase="1">
+                   ${icon('i-plus')} Create the first use case
+                 </button>`
+              : `<p class="muted">Creating one needs <strong>Edit workflow definitions</strong>,
+                   which your level does not hold in this division.</p>`
+          }
+        </div>`;
+      const starter = qs('#usecase-grid [data-new-usecase]');
+      if (starter) starter.addEventListener('click', () => openUseCaseForm('create'));
+      return;
+    }
+
     qs('#usecase-grid').innerHTML = useCases
       .map(
         (uc) => `
@@ -629,6 +668,16 @@
     qs('#uc-version').innerHTML = `${icon('i-book')} Version ${version} — history`;
     qs('#uc-version').title = 'See every version of this workflow, and roll back to one';
 
+    const retired = !!wf.detail.archived;
+    const mayEdit = can('edit_workflow');
+    qs('#uc-retired').classList.toggle('hidden', !retired);
+    qs('#uc-settings').classList.toggle('hidden', !mayEdit);
+    qs('#uc-retire').classList.toggle('hidden', !mayEdit);
+    qs('#uc-retire-label').textContent = retired ? 'Reinstate' : 'Retire';
+    qs('#uc-retire').title = retired
+      ? 'Put this use case back into service'
+      : 'Take this use case out of service. Its records and history are kept.';
+
     renderDiagram();
     renderNarrative();
     renderUseCaseState();
@@ -637,6 +686,7 @@
 
   function renderUseCaseBar() {
     const cases = (state.summary && state.summary.use_cases) || [];
+    // With nothing to switch between, the bar is only the Reference link.
     qs('#uc-bar').innerHTML =
       cases
         .map(
@@ -655,6 +705,321 @@
     );
     qs('#uc-bar [data-reference]').addEventListener('click', () => switchView('reference'));
   }
+
+  // ---------------- Authoring a use case ----------------
+  //
+  // A use case is a record rather than a constant now, so this is where one is
+  // created, renamed, repointed and retired. The same form serves both jobs:
+  // creating differs from editing only in where it posts and what it starts
+  // from, so there is one place to change what a use case is made of.
+
+  function currentUseCaseEntry() {
+    const detail = state.workflow && state.workflow.detail;
+    if (!detail) return null;
+    const def = detail.definition;
+    return {
+      id: def.workflow_id,
+      title: def.title,
+      folder: def.folder,
+      purpose: def.purpose,
+      documents: def.documents || [],
+      rubric: detail.rubric || [],
+      document_kinds: detail.document_kinds || '',
+    };
+  }
+
+  function openUseCaseForm(mode) {
+    const source =
+      mode === 'settings'
+        ? currentUseCaseEntry()
+        : { title: '', folder: '', purpose: '', documents: [], rubric: [], document_kinds: '' };
+    if (!source) return;
+
+    state.useCaseForm = {
+      mode: mode,
+      // Copied, so cancelling leaves the saved use case untouched.
+      documents: (source.documents || []).map((d) => ({
+        name: d.name || '',
+        match: (d.match || []).join(', '),
+        folder: d.folder || '',
+      })),
+      source: source,
+    };
+    renderUseCaseForm();
+  }
+
+  function closeUseCaseForm() {
+    const host = state.useCaseForm && state.useCaseForm.mode === 'settings'
+      ? qs('#uc-settings-host')
+      : qs('#uc-create-host');
+    state.useCaseForm = null;
+    host.innerHTML = '';
+  }
+
+  function documentRowsHtml(rows) {
+    if (!rows.length) {
+      return `<p class="muted uc-form-none">
+        Nothing required yet — a run will have nothing to gather. Add at least one document
+        for the intake step to look for.
+      </p>`;
+    }
+    return rows
+      .map(
+        (row, index) => `
+        <div class="doc-row" data-doc-row="${index}">
+          <div class="field">
+            <label for="doc-name-${index}">Document</label>
+            <input id="doc-name-${index}" data-doc-name="${index}"
+                   value="${esc(row.name)}" placeholder="Certificate of insurance" />
+          </div>
+          <div class="field">
+            <label for="doc-match-${index}">Filename keywords</label>
+            <input id="doc-match-${index}" data-doc-match="${index}"
+                   value="${esc(row.match)}" placeholder="coi, certificate" />
+          </div>
+          <button type="button" class="btn btn-text btn-sm ne-remove" data-doc-remove="${index}"
+                  title="Remove this required document">${icon('i-x')}</button>
+        </div>`
+      )
+      .join('');
+  }
+
+  function renderUseCaseForm() {
+    const form = state.useCaseForm;
+    if (!form) return;
+
+    const creating = form.mode === 'create';
+    const host = creating ? qs('#uc-create-host') : qs('#uc-settings-host');
+    const src = form.source;
+    const folders = (state.summary && state.summary.folders) || [];
+
+    host.innerHTML = `
+      <section class="panel uc-form-panel">
+        <div class="panel-head">
+          <div class="panel-head-title">
+            <h2>${creating ? 'New use case' : 'Use case settings'}</h2>
+          </div>
+          <button class="btn btn-text btn-sm" id="ucf-cancel">${icon('i-x')} Cancel</button>
+        </div>
+        <p class="panel-hint">
+          ${
+            creating
+              ? `It starts with the standard five steps — gather, read, decide, hand off,
+                 record — which you then edit in the walkthrough. The folder is where it
+                 reads documents from; the requirements are what the analysis step grades
+                 against.`
+              : `Renaming is safe: the records this use case logged and every version of its
+                 definition stay attached to it.`
+          }
+        </p>
+        <form class="create-form" id="uc-form">
+          <div class="field">
+            <label for="ucf-title">Title</label>
+            <input id="ucf-title" value="${esc(src.title || '')}" placeholder="Estoppel Certificate" />
+          </div>
+          <div class="field">
+            <label for="ucf-folder">Folder it reads</label>
+            <select id="ucf-folder">
+              <option value="">Choose a folder…</option>
+              ${folders
+                .map(
+                  (f) =>
+                    `<option value="${esc(f.name || f)}" ${
+                      (f.name || f) === src.folder ? 'selected' : ''
+                    }>${esc(f.name || f)}</option>`
+                )
+                .join('')}
+            </select>
+          </div>
+          <div class="field field-wide">
+            <label for="ucf-purpose">Purpose <span class="opt">(shown on the tile)</span></label>
+            <input id="ucf-purpose" value="${esc(src.purpose || '')}"
+                   placeholder="Confirm the tenant's account before a sale." />
+          </div>
+          <div class="field field-wide">
+            <label for="ucf-rubric">
+              Requirements <span class="opt">(one per line — what a document is graded against)</span>
+            </label>
+            <textarea id="ucf-rubric" rows="4"
+                      placeholder="Rent stated matches the lease&#10;No unrecorded side agreements">${esc(
+                        (src.rubric || []).join('\n')
+                      )}</textarea>
+          </div>
+          <div class="field field-wide">
+            <label for="ucf-kinds">
+              Documents it expects <span class="opt">(optional, described to the model)</span>
+            </label>
+            <input id="ucf-kinds" value="${esc(src.document_kinds || '')}"
+                   placeholder="signed estoppel certificate, current lease" />
+          </div>
+
+          <div class="field field-wide">
+            <label>Required documents</label>
+            <p class="panel-hint uc-form-sub">
+              The intake step marks each one present or missing by matching these keywords
+              against filenames, so the answer is reproducible and names the file that counted.
+            </p>
+            <div id="ucf-docs">${documentRowsHtml(form.documents)}</div>
+            <button type="button" class="btn btn-secondary btn-sm" id="ucf-add-doc">
+              ${icon('i-plus')} Add a required document
+            </button>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="ucf-save">
+            ${creating ? 'Create use case' : 'Save changes'}
+          </button>
+        </form>
+      </section>`;
+
+    bindUseCaseForm();
+    const title = qs('#ucf-title');
+    if (title) title.focus();
+  }
+
+  function readDocumentRows() {
+    const form = state.useCaseForm;
+    if (!form) return;
+    form.documents.forEach((row, index) => {
+      const name = qs(`[data-doc-name="${index}"]`);
+      const match = qs(`[data-doc-match="${index}"]`);
+      if (name) row.name = name.value;
+      if (match) row.match = match.value;
+    });
+  }
+
+  function bindUseCaseForm() {
+    qs('#ucf-cancel').addEventListener('click', closeUseCaseForm);
+
+    qs('#ucf-add-doc').addEventListener('click', () => {
+      readDocumentRows();
+      state.useCaseForm.documents.push({ name: '', match: '', folder: '' });
+      // Re-rendered from state, so nothing typed above is lost.
+      renderUseCaseForm();
+    });
+
+    qsa('[data-doc-remove]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        readDocumentRows();
+        state.useCaseForm.documents.splice(Number(btn.dataset.docRemove), 1);
+        renderUseCaseForm();
+      })
+    );
+
+    qs('#uc-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await saveUseCaseForm();
+    });
+  }
+
+  async function saveUseCaseForm() {
+    const form = state.useCaseForm;
+    if (!form) return;
+    readDocumentRows();
+
+    const title = qs('#ucf-title').value.trim();
+    const folder = qs('#ucf-folder').value;
+    if (!title) {
+      toast('A use case needs a title.', 'error');
+      return;
+    }
+    if (!folder) {
+      toast('Choose the folder this use case reads from.', 'error');
+      return;
+    }
+
+    const payload = {
+      division: state.division,
+      title: title,
+      folder: folder,
+      purpose: qs('#ucf-purpose').value.trim(),
+      document_kinds: qs('#ucf-kinds').value.trim(),
+      rubric: qs('#ucf-rubric')
+        .value.split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+      documents: form.documents
+        .map((row) => ({
+          name: (row.name || '').trim(),
+          match: (row.match || '')
+            .split(',')
+            .map((k) => k.trim())
+            .filter(Boolean),
+          folder: row.folder || null,
+        }))
+        .filter((d) => d.name && d.match.length),
+    };
+
+    const button = qs('#ucf-save');
+    button.disabled = true;
+    try {
+      if (form.mode === 'create') {
+        payload.created_by = state.profile.name;
+        const created = await api('/workflows', jsonBody(payload));
+        closeUseCaseForm();
+        await refreshDashboard();
+        toast(`“${created.use_case.title}” created — now edit its steps.`, 'success');
+        await openUseCase(created.use_case.id);
+      } else {
+        payload.updated_by = state.profile.name;
+        const id = state.workflow.id;
+        await api('/workflows/' + encodeURIComponent(id), jsonBody(payload, 'PATCH'));
+        closeUseCaseForm();
+        await refreshDashboard();
+        await loadUseCase(id, { keepRun: true });
+        toast('Use case updated.', 'success');
+      }
+    } catch (err) {
+      toast('Could not save: ' + err.message, 'error');
+      button.disabled = false;
+    }
+  }
+
+  async function toggleRetired() {
+    const wf = state.workflow;
+    if (!wf) return;
+    const retiring = !wf.detail.archived;
+    if (
+      retiring &&
+      !confirm(
+        'Take this use case out of service?\n\n' +
+          'It disappears from the dashboard, but its records, approvals and version ' +
+          'history are kept, and you can reinstate it.'
+      )
+    ) {
+      return;
+    }
+    try {
+      await api(
+        '/workflows/' + encodeURIComponent(wf.id) + '/archive',
+        jsonBody({
+          division: state.division,
+          archived: retiring,
+          updated_by: state.profile.name,
+        })
+      );
+    } catch (err) {
+      toast('Could not change that: ' + err.message, 'error');
+      return;
+    }
+    await refreshDashboard();
+    if (retiring) {
+      switchView('dashboard');
+      toast('Use case retired. Its records are kept.', 'success');
+    } else {
+      await loadUseCase(wf.id, { keepRun: true });
+      toast('Use case reinstated.', 'success');
+    }
+  }
+
+  qs('#uc-new').addEventListener('click', () => {
+    if (state.useCaseForm && state.useCaseForm.mode === 'create') closeUseCaseForm();
+    else openUseCaseForm('create');
+  });
+  qs('#uc-settings').addEventListener('click', () => {
+    if (state.useCaseForm && state.useCaseForm.mode === 'settings') closeUseCaseForm();
+    else openUseCaseForm('settings');
+  });
+  qs('#uc-retire').addEventListener('click', toggleRetired);
 
   // ---- The diagram: one node per step, coloured by kind ----
 

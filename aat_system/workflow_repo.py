@@ -29,6 +29,7 @@ from typing import List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from . import workflow_catalog
 from .config import Division, division_key as _division_key
 from .models import Document, Folder, WorkflowRecord, WorkflowRevision, WorkflowStep
 
@@ -478,20 +479,62 @@ def _slug(text: str) -> str:
     return slug or "step"
 
 
-def catalog() -> List[dict]:
-    """Workflow definitions without a database — id, title, folder, purpose."""
-    return [
-        {
-            "id": wf_id,
-            "title": wf["title"],
-            "folder": wf["folder"],
-            "purpose": wf["purpose"],
-            "documents": [
-                {"name": d["name"], "folder": d.get("folder", wf["folder"])} for d in wf["documents"]
-            ],
-        }
-        for wf_id, wf in WORKFLOW_CATALOG.items()
-    ]
+# What a use case created in the UI starts as: the same five-kind spine the
+# shipped use cases follow, worded generically. A new use case is therefore
+# runnable and reviewable the moment it exists — its author edits wording
+# rather than assembling a workflow from an empty page — and every kind the
+# runner knows how to execute is already there to be kept or deleted.
+NEW_WORKFLOW_STEPS = [
+    {
+        "title": "Gather the documents",
+        "kind": "intake",
+        "summary": "Collect the paperwork this use case grades, and the standard to grade it against.",
+        "bullets": [
+            "Reads this use case's folder for each document listed as required.",
+            "Records which file satisfied each requirement, so the check is auditable.",
+        ],
+    },
+    {
+        "title": "Redact and read",
+        "kind": "analysis",
+        "summary": "Strip identifiers, then grade the document against this use case's requirements.",
+        "bullets": [
+            "Redacts personal identifiers before anything is sent for analysis.",
+            "Grades the document against the requirements set on this use case.",
+        ],
+    },
+    {
+        "title": "Apply the rule",
+        "kind": "decision",
+        "summary": "Decide pass or fail from everything gathered and graded.",
+        "bullets": ["Clears only when nothing is missing and every requirement was met."],
+    },
+    {
+        "title": "Hand to an approver",
+        "kind": "human",
+        "summary": "Queue the outcome for sign-off when the run could not clear on its own.",
+        "bullets": ["Raises an approval case naming what blocked the run."],
+    },
+    {
+        "title": "Write the record",
+        "kind": "record",
+        "summary": "Log the run to this use case's record file.",
+        "bullets": ["One row per run, exported as the record file."],
+    },
+]
+
+
+def default_steps(workflow_id: str, shipped: bool = False) -> List[dict]:
+    """The steps a use case starts life with.
+
+    Shipped use cases have hand-written defaults; one created in the UI gets the
+    generic spine, so both have a version 1 to roll back to. Provenance decides
+    rather than the slug, because two divisions may use the same slug for
+    different use cases.
+    """
+    if shipped:
+        return DEFAULT_STEPS.get(workflow_id) or NEW_WORKFLOW_STEPS
+    return NEW_WORKFLOW_STEPS
 
 
 # ---------------- Definition: the steps behind diagram, narrative and run ----------------
@@ -581,28 +624,60 @@ def _write_steps(
     )
 
 
-def _is_default(steps: List[dict], workflow_id: str) -> bool:
-    defaults = DEFAULT_STEPS.get(workflow_id, [])
+def _baseline_steps(db: Session, workflow_id: str, division: Division) -> List[dict]:
+    """The definition as first seeded — what "restore defaults" goes back to.
+
+    Read from this division's own seed revision rather than from the shipped
+    constant, because the catalog is per division now: Retail's use case may
+    share a slug with Residential's and have started from different steps.
+    Falls back to the shipped defaults for a definition seeded before
+    revisions were recorded.
+    """
+    seeded = (
+        db.query(WorkflowRevision)
+        .filter(
+            WorkflowRevision.workflow_id == workflow_id,
+            WorkflowRevision.division == division,
+            WorkflowRevision.source == "seed",
+        )
+        .order_by(WorkflowRevision.version.asc())
+        .first()
+    )
+    if seeded is not None:
+        return json.loads(seeded.steps_json)
+    # No recorded seed — fall back to what this use case would have started from.
+    row = workflow_catalog.entry(db, workflow_id, division, include_archived=True)
+    return list(default_steps(workflow_id, row["shipped"]))
+
+
+def _is_default(db: Session, workflow_id: str, division: Division, steps: List[dict]) -> bool:
+    defaults = _baseline_steps(db, workflow_id, division)
     if len(steps) != len(defaults):
         return False
     for current, default in zip(steps, defaults):
         if current["title"] != default["title"] or current["kind"] != default["kind"]:
             return False
-        if current["summary"] != default["summary"] or current["bullets"] != default["bullets"]:
+        if current["summary"] != (default.get("summary") or ""):
+            return False
+        if current["bullets"] != list(default.get("bullets") or []):
             return False
     return True
 
 
 def get_definition(db: Session, workflow_id: str, division: Division) -> dict:
-    """The workflow's steps, seeding the shipped defaults on first read."""
-    wf = WORKFLOW_CATALOG.get(workflow_id)
-    if wf is None:
-        raise ValueError(f"Unknown workflow '{workflow_id}'")
+    """The workflow's steps, seeding its starting definition on first read."""
+    # Retired use cases included: their records and history stay readable.
+    wf = workflow_catalog.entry(db, workflow_id, division, include_archived=True)
 
     rows = _ordered_steps(db, workflow_id, division)
     if not rows:
         _write_steps(
-            db, workflow_id, division, DEFAULT_STEPS.get(workflow_id, []), "AAT default", source="seed"
+            db,
+            workflow_id,
+            division,
+            default_steps(workflow_id, wf["shipped"]),
+            "AAT default",
+            source="seed",
         )
         rows = _ordered_steps(db, workflow_id, division)
 
@@ -617,8 +692,50 @@ def get_definition(db: Session, workflow_id: str, division: Division) -> dict:
         "steps": steps,
         "updated_at": latest.isoformat() if latest else None,
         "updated_by": rows[0].updated_by if rows else None,
-        "is_default": _is_default(steps, workflow_id),
+        "is_default": _is_default(db, workflow_id, division, steps),
+        # Carried through so the page can render what this use case requires
+        # and grades against without a second lookup.
+        "documents": wf["documents"],
+        "rubric": wf["rubric"],
+        "document_kinds": wf["document_kinds"],
+        "archived": wf["archived"],
     }
+
+
+def seed_definition(
+    db: Session, workflow_id: str, division: Division, updated_by: Optional[str] = None
+) -> dict:
+    """Give a newly created use case its starting definition, from a clean slate.
+
+    Any step rows and revisions already sitting on this (slug, division) are
+    cleared first. They can exist without the use case existing: before the
+    catalog was per division, reading a use case in any division seeded rows for
+    it, and those rows outlived the shared catalog. Inheriting them would start a
+    new use case from another division's steps and make "restore defaults" go
+    back to them.
+
+    Called only for a use case just created. Editing an existing one goes
+    through `update_definition`, which preserves history.
+    """
+    wf = workflow_catalog.entry(db, workflow_id, division, include_archived=True)
+
+    db.query(WorkflowStep).filter(
+        WorkflowStep.workflow_id == workflow_id, WorkflowStep.division == division
+    ).delete(synchronize_session=False)
+    db.query(WorkflowRevision).filter(
+        WorkflowRevision.workflow_id == workflow_id, WorkflowRevision.division == division
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    _write_steps(
+        db,
+        workflow_id,
+        division,
+        default_steps(workflow_id, wf["shipped"]),
+        updated_by or "New use case",
+        source="seed",
+    )
+    return get_definition(db, workflow_id, division)
 
 
 def update_definition(
@@ -634,8 +751,8 @@ def update_definition(
     comes back out of here, which is what keeps the narrative honest: a step
     written into the narrative is a step the run actually reports on.
     """
-    if workflow_id not in WORKFLOW_CATALOG:
-        raise ValueError(f"Unknown workflow '{workflow_id}'")
+    if not workflow_catalog.exists(db, workflow_id, division, include_archived=True):
+        raise ValueError(f"Unknown workflow '{workflow_id}' in {division.value}")
     if not steps:
         raise ValueError("A workflow needs at least one step.")
 
@@ -651,15 +768,15 @@ def update_definition(
 def reset_definition(
     db: Session, workflow_id: str, division: Division, updated_by: Optional[str] = None
 ) -> dict:
-    """Restore the shipped steps — the escape hatch after a bad edit."""
-    if workflow_id not in WORKFLOW_CATALOG:
-        raise ValueError(f"Unknown workflow '{workflow_id}'")
+    """Restore the starting steps — the escape hatch after a bad edit."""
+    if not workflow_catalog.exists(db, workflow_id, division, include_archived=True):
+        raise ValueError(f"Unknown workflow '{workflow_id}' in {division.value}")
     get_definition(db, workflow_id, division)  # baseline on the record first
     _write_steps(
         db,
         workflow_id,
         division,
-        DEFAULT_STEPS.get(workflow_id, []),
+        _baseline_steps(db, workflow_id, division),
         updated_by or "AAT default",
         source="reset",
     )
@@ -790,13 +907,14 @@ def _record_revision(
     return revision
 
 
-def _revision_dict(revision: WorkflowRevision, current_version: int) -> dict:
-    wf = WORKFLOW_CATALOG.get(revision.workflow_id, {})
+def _revision_dict(
+    revision: WorkflowRevision, current_version: int, title: Optional[str] = None
+) -> dict:
     steps = json.loads(revision.steps_json)
     return {
         "version": revision.version,
         "workflow_id": revision.workflow_id,
-        "workflow_title": wf.get("title", revision.workflow_id),
+        "workflow_title": title or revision.workflow_id,
         "source": revision.source,
         "source_label": REVISION_SOURCES.get(revision.source, "Saved"),
         "note": revision.note or "",
@@ -837,7 +955,8 @@ def list_revisions(
         .all()
     )
     latest = rows[0].version if rows else 0
-    return [_revision_dict(r, latest) for r in rows]
+    names = workflow_catalog.titles(db, division)
+    return [_revision_dict(r, latest, names.get(r.workflow_id)) for r in rows]
 
 
 def change_log(db: Session, division: Division, limit: int = 60) -> List[dict]:
@@ -847,17 +966,30 @@ def change_log(db: Session, division: Division, limit: int = 60) -> List[dict]:
     did this system's behaviour last change" is one place to look rather than
     five.
     """
-    current = {
-        wf_id: current_version(db, wf_id, division) for wf_id in WORKFLOW_CATALOG
-    }
+    # Retired use cases included: their history is still history.
+    names = workflow_catalog.titles(db, division)
+    if not names:
+        return []  # a division with no use cases has no history to show
+
+    current = {wf_id: current_version(db, wf_id, division) for wf_id in names}
     rows = (
         db.query(WorkflowRevision)
-        .filter(WorkflowRevision.division == division)
+        .filter(
+            WorkflowRevision.division == division,
+            # Scoped to use cases this division actually has. Revisions can
+            # outlive their use case — before the catalog was per division,
+            # reading one seeded rows in every division — and those would
+            # otherwise show here as history for something not in the division.
+            WorkflowRevision.workflow_id.in_(names.keys()),
+        )
         .order_by(WorkflowRevision.created_at.desc(), WorkflowRevision.id.desc())
         .limit(limit)
         .all()
     )
-    return [_revision_dict(r, current.get(r.workflow_id, 0)) for r in rows]
+    return [
+        _revision_dict(r, current.get(r.workflow_id, 0), names.get(r.workflow_id))
+        for r in rows
+    ]
 
 
 def restore_revision(
@@ -872,8 +1004,8 @@ def restore_revision(
     The restore is itself a new version rather than a rewind: nothing is deleted
     from the history, so restoring a bad restore is possible too.
     """
-    if workflow_id not in WORKFLOW_CATALOG:
-        raise ValueError(f"Unknown workflow '{workflow_id}'")
+    if not workflow_catalog.exists(db, workflow_id, division, include_archived=True):
+        raise ValueError(f"Unknown workflow '{workflow_id}' in {division.value}")
 
     revision = (
         db.query(WorkflowRevision)
@@ -1013,12 +1145,10 @@ def _folder_documents(db: Session, division: Division, folder_name: str) -> List
 def required_documents(db: Session, workflow_id: str, division: Division) -> dict:
     """Per-required-document present/missing, with the file that satisfied it.
 
-    Matching is on filename keywords declared in the catalog, so the answer is
+    Matching is on filename keywords declared on the use case, so the answer is
     reproducible and the UI can show *which* file counted.
     """
-    wf = WORKFLOW_CATALOG.get(workflow_id)
-    if not wf:
-        raise ValueError(f"Unknown workflow '{workflow_id}'")
+    wf = workflow_catalog.entry(db, workflow_id, division, include_archived=True)
 
     cache: dict = {}
     items = []
@@ -1067,9 +1197,7 @@ def record_files(db: Session, workflow_id: str, division: Division) -> List[dict
     The generated record file is always listed first — it is derived from
     workflow_records and therefore always current. Real uploads follow.
     """
-    wf = WORKFLOW_CATALOG.get(workflow_id)
-    if not wf:
-        raise ValueError(f"Unknown workflow '{workflow_id}'")
+    wf = workflow_catalog.entry(db, workflow_id, division, include_archived=True)
 
     summary = record_summary(db, workflow_id, division)
     files = [

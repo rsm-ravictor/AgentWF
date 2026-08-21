@@ -33,6 +33,7 @@
       <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.2A2 2 0 0 1 6 3.5h5V20H6a2 2 0 0 0-2 1.5V5.2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M20 5.2a2 2 0 0 0-2-1.7h-5V20h5a2 2 0 0 1 2 1.5V5.2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
       <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 8v11a1 1 0 001 1h12a1 1 0 001-1V8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 13h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
       <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     </svg>
 
@@ -166,7 +167,15 @@
         <div class="section-heading">
           <h2>Use cases</h2>
           <p>Open one for its workflow diagram, written walkthrough, and a live run</p>
+          <div class="sh-actions">
+            <button class="btn btn-secondary btn-sm hidden" id="uc-new">
+              <svg class="icon"><use href="#i-plus"/></svg> New use case
+            </button>
+          </div>
         </div>
+        <!-- The create form, revealed by the button above. A use case is a
+             record now, so a division builds its own set from here. -->
+        <div id="uc-create-host"></div>
         <div class="usecase-grid" id="usecase-grid"></div>
 
         <!-- Where the data lives -->
@@ -219,8 +228,21 @@
             <span class="chip chip-quiet" id="uc-updated"></span>
             <!-- Jumps to this workflow's history in the Reference change log -->
             <button type="button" class="chip chip-btn" id="uc-version"></button>
+            <span class="pill pill-quiet hidden" id="uc-retired">Retired</span>
+            <div class="uc-head-actions">
+              <button class="btn btn-secondary btn-sm hidden" id="uc-settings">
+                <svg class="icon"><use href="#i-pencil"/></svg> Use case settings
+              </button>
+              <button class="btn btn-text btn-sm hidden" id="uc-retire">
+                <svg class="icon"><use href="#i-archive"/></svg> <span id="uc-retire-label">Retire</span>
+              </button>
+            </div>
           </div>
         </header>
+
+        <!-- Rename, repoint the folder, change what it requires and grades on.
+             Revealed by "Use case settings" above. -->
+        <div id="uc-settings-host"></div>
 
         <div class="uc-body">
           <!-- LEFT 2/3: the workflow diagram -->

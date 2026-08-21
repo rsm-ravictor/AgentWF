@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from aat_system import approval_repo, workflow_repo
+from aat_system import approval_repo, workflow_catalog, workflow_repo
 from aat_system.config import Division, Role
 from aat_system.models import Base, Document, Folder, User
 
@@ -29,6 +29,9 @@ def db(tmp_path):
     session.add(owner)
     session.commit()
     session.owner_id = owner.id
+    # A use case is a row now, not a constant, so the shipped set has to be
+    # seeded here exactly as the app seeds it at startup.
+    workflow_catalog.seed(session, workflow_repo.WORKFLOW_CATALOG)
     yield session
     session.close()
 
@@ -52,8 +55,8 @@ def add_document(db, folder_name, filename, division=MF):
 
 # ---------------- Catalog ----------------
 
-def test_catalog_covers_every_phase_one_use_case():
-    ids = {w["id"] for w in workflow_repo.catalog()}
+def test_catalog_covers_every_phase_one_use_case(db):
+    ids = {w["id"] for w in workflow_catalog.catalog(db, MF)}
     assert ids == {
         "vendor-insurance",
         "renters-insurance",
@@ -78,8 +81,8 @@ def test_every_use_case_ships_a_definition_the_runner_understands():
         assert kinds[-1] == "record", f"{wf_id} does not end by recording the run"
 
 
-def test_catalog_titles_and_purposes_are_present():
-    for entry in workflow_repo.catalog():
+def test_catalog_titles_and_purposes_are_present(db):
+    for entry in workflow_catalog.catalog(db, MF):
         assert entry["title"] and entry["purpose"] and entry["folder"]
 
 
@@ -163,7 +166,7 @@ def test_definitions_are_per_division(db):
     workflow_repo.update_definition(
         db, "breach-notice", MF, [{"title": "Multifamily only", "kind": "note", "summary": "", "bullets": []}]
     )
-    office = workflow_repo.get_definition(db, "breach-notice", Division.OFFICE)
+    office = workflow_repo.get_definition(db, "breach-notice", Division.CONSTRUCTION)
     assert office["is_default"] is True
     assert office["steps"][0]["title"] != "Multifamily only"
 
@@ -299,8 +302,8 @@ def test_history_is_per_division(db):
     workflow_repo.update_definition(
         db, "breach-notice", MF, [{"title": "Multifamily only", "kind": "note", "summary": "", "bullets": []}]
     )
-    assert workflow_repo.list_revisions(db, "breach-notice", Division.OFFICE) == []
-    assert workflow_repo.change_log(db, Division.OFFICE) == []
+    assert workflow_repo.list_revisions(db, "breach-notice", Division.CONSTRUCTION) == []
+    assert workflow_repo.change_log(db, Division.CONSTRUCTION) == []
 
 
 # ---------------- Required documents ----------------
@@ -332,9 +335,9 @@ def test_a_document_in_the_wrong_folder_does_not_count(db):
 
 
 def test_required_documents_are_scoped_by_division(db):
-    add_document(db, "Vendor Insurances", "certificate.pdf", division=Division.OFFICE)
+    add_document(db, "Vendor Insurances", "certificate.pdf", division=Division.CONSTRUCTION)
     assert workflow_repo.required_documents(db, "vendor-insurance", MF)["present"] == 0
-    assert workflow_repo.required_documents(db, "vendor-insurance", Division.OFFICE)["present"] == 1
+    assert workflow_repo.required_documents(db, "vendor-insurance", Division.CONSTRUCTION)["present"] == 1
 
 
 # ---------------- Records ----------------
@@ -432,4 +435,4 @@ def test_samples_seed_once_and_clear_cleanly(db):
 
 def test_approvals_are_scoped_by_division(db):
     approval_repo.create(db, "vendor-insurance", MF, subject="MF case")
-    assert approval_repo.list_pending(db, Division.OFFICE) == []
+    assert approval_repo.list_pending(db, Division.CONSTRUCTION) == []

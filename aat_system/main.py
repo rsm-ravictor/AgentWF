@@ -34,6 +34,7 @@ from . import (
     approval_repo,
     permission_repo,
     user_repo,
+    workflow_catalog,
     workflow_repo,
     workflow_runner,
 )
@@ -60,6 +61,45 @@ class StepPayload(BaseModel):
     summary: str = ""
     bullets: List[str] = []
     key: Optional[str] = None
+
+
+class RequiredDocumentPayload(BaseModel):
+    name: str
+    # Filename keywords that count as a match. Kept explicit so present/missing
+    # stays a deterministic answer rather than a guess.
+    match: List[str] = []
+    folder: Optional[str] = None
+
+
+class UseCaseCreateRequest(BaseModel):
+    division: str = "mf"
+    title: str
+    folder: str
+    purpose: str = ""
+    documents: List[RequiredDocumentPayload] = []
+    # What the analysis step grades against. Without these a run has nothing to
+    # check, so the UI asks for them at creation time.
+    rubric: List[str] = []
+    document_kinds: str = ""
+    created_by: Optional[str] = None
+
+
+class UseCaseUpdateRequest(BaseModel):
+    division: str = "mf"
+    # All optional: a rename should not have to restate the whole use case.
+    title: Optional[str] = None
+    folder: Optional[str] = None
+    purpose: Optional[str] = None
+    documents: Optional[List[RequiredDocumentPayload]] = None
+    rubric: Optional[List[str]] = None
+    document_kinds: Optional[str] = None
+    updated_by: Optional[str] = None
+
+
+class UseCaseArchiveRequest(BaseModel):
+    division: str = "mf"
+    archived: bool = True
+    updated_by: Optional[str] = None
 
 
 class DefinitionUpdateRequest(BaseModel):
@@ -148,6 +188,11 @@ def startup_event():
                 get_or_create_folder(db, folder_name, division)
         permission_repo.ensure_seeded(db)
         user_repo.seed_roster(db)
+        # The shipped use cases, for the divisions that ship with them. Office/
+        # Retail is deliberately left empty and built up from the UI.
+        workflow_catalog.seed(
+            db, workflow_repo.WORKFLOW_CATALOG, llm_analyzer.WORKFLOW_RUBRICS
+        )
         # Illustrative cases so the queue is not empty on a fresh install. They
         # are tagged 'sample' in the UI and clearable from the dashboard.
         for division in Division:
@@ -329,7 +374,8 @@ def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
     # One tile payload per use case. Every tile follows the same shape whatever
     # the use case does — only the execution logic behind it differs.
     use_cases = []
-    for wf_id, wf in workflow_repo.WORKFLOW_CATALOG.items():
+    for wf in workflow_catalog.catalog(db, div):
+        wf_id = wf["id"]
         definition = workflow_repo.get_definition(db, wf_id, div)
         records = workflow_repo.record_summary(db, wf_id, div)
         documents = workflow_repo.required_documents(db, wf_id, div)
@@ -370,13 +416,108 @@ def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
 
 # ---------------- Use cases ----------------
 
+@app.get("/workflows")
+def list_workflows(division: str = "mf", include_archived: bool = False, db: Session = Depends(get_db)):
+    """The division's use cases — the catalog the dashboard and top bar render."""
+    div = resolve_division(division)
+    return {
+        "division": div.value,
+        "division_key": workflow_repo.division_key(div),
+        "use_cases": workflow_catalog.catalog(db, div, include_archived=include_archived),
+        "folders": folders_for(div),
+        "step_kinds": workflow_repo.STEP_KINDS,
+    }
+
+
+@app.post("/workflows", status_code=201)
+def create_workflow(payload: UseCaseCreateRequest, db: Session = Depends(get_db)):
+    """Add a use case to a division.
+
+    The steps are not written here: the first read of the definition seeds the
+    starter spine, the same path the shipped use cases take. So a use case is
+    runnable the moment it is created, and its author edits wording rather than
+    building a workflow from an empty page.
+    """
+    div = resolve_division(payload.division)
+    try:
+        entry = workflow_catalog.create(
+            db,
+            div,
+            title=payload.title,
+            folder=payload.folder,
+            purpose=payload.purpose,
+            documents=[d.model_dump() for d in payload.documents],
+            rubric=payload.rubric,
+            document_kinds=payload.document_kinds,
+            created_by=payload.created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Writes version 1 from a clean slate, so a slug carrying leftover rows from
+    # the shared-catalog era cannot hand this use case another division's steps.
+    definition = workflow_repo.seed_definition(
+        db, entry["id"], div, updated_by=payload.created_by
+    )
+    return {"use_case": entry, "definition": definition}
+
+
+@app.patch("/workflows/{workflow_id}")
+def update_workflow(workflow_id: str, payload: UseCaseUpdateRequest, db: Session = Depends(get_db)):
+    """Rename a use case, repoint its folder, or change what it requires.
+
+    The slug is left alone, so records, approvals and revision history stay
+    attached to the use case across a rename.
+    """
+    div = resolve_division(payload.division)
+    documents = (
+        None if payload.documents is None else [d.model_dump() for d in payload.documents]
+    )
+    try:
+        return {
+            "use_case": workflow_catalog.update(
+                db,
+                workflow_id,
+                div,
+                title=payload.title,
+                folder=payload.folder,
+                purpose=payload.purpose,
+                documents=documents,
+                rubric=payload.rubric,
+                document_kinds=payload.document_kinds,
+                updated_by=payload.updated_by,
+            )
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/workflows/{workflow_id}/archive")
+def archive_workflow(workflow_id: str, payload: UseCaseArchiveRequest, db: Session = Depends(get_db)):
+    """Retire a use case, or bring it back.
+
+    Retired rather than deleted: the runs it recorded and the approvals it raised
+    are history that should outlive it being taken out of service.
+    """
+    div = resolve_division(payload.division)
+    try:
+        return {
+            "use_case": workflow_catalog.set_archived(
+                db, workflow_id, div, payload.archived, updated_by=payload.updated_by
+            )
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @app.get("/workflows/{workflow_id}")
 def workflow_detail(workflow_id: str, division: str = "mf", db: Session = Depends(get_db)):
     """Everything the use case detail page renders: definition, state, rubric."""
-    if workflow_id not in workflow_repo.WORKFLOW_CATALOG:
-        raise HTTPException(status_code=404, detail=f"Unknown workflow '{workflow_id}'")
     div = resolve_division(division)
-    rubric = llm_analyzer.WORKFLOW_RUBRICS.get(workflow_id, {})
+    if not workflow_catalog.exists(db, workflow_id, div, include_archived=True):
+        raise HTTPException(
+            status_code=404, detail=f"Unknown workflow '{workflow_id}' in {div.value}"
+        )
+    entry = workflow_catalog.entry(db, workflow_id, div, include_archived=True)
     return {
         "definition": workflow_repo.get_definition(db, workflow_id, div),
         "version": workflow_repo.current_version(db, workflow_id, div),
@@ -385,7 +526,11 @@ def workflow_detail(workflow_id: str, division: str = "mf", db: Session = Depend
         "record_rows": workflow_repo.list_records(db, workflow_id, div, limit=25),
         "record_files": workflow_repo.record_files(db, workflow_id, div),
         "required_documents": workflow_repo.required_documents(db, workflow_id, div),
-        "rubric": rubric.get("requirements", []),
+        # From the use case itself, so one created in the UI shows and grades
+        # against its own requirements rather than falling back on a constant.
+        "rubric": entry["rubric"],
+        "document_kinds": entry["document_kinds"],
+        "archived": entry["archived"],
         "analysis_configured": llm_analyzer.has_api_key(),
         "model": llm_analyzer.MODEL,
         # Which route decisions are made through, so the UI names it rather than
@@ -401,8 +546,6 @@ def put_workflow_definition(workflow_id: str, payload: DefinitionUpdateRequest, 
     This is the write end of the single source of truth: the diagram, the
     narrative and the run all read what this stores.
     """
-    if workflow_id not in workflow_repo.WORKFLOW_CATALOG:
-        raise HTTPException(status_code=404, detail=f"Unknown workflow '{workflow_id}'")
     try:
         return workflow_repo.update_definition(
             db,
@@ -443,10 +586,14 @@ async def run_workflow(
     Unauthenticated for the same reason as /dashboard/summary. It accepts
     uploads and spends API tokens, so gate it before exposing beyond localhost.
     """
-    if workflow_id not in workflow_repo.WORKFLOW_CATALOG:
-        raise HTTPException(status_code=404, detail=f"Unknown workflow '{workflow_id}'")
-
     div = resolve_division(division)
+    # A session of its own: this route takes no Depends(get_db), because
+    # dependency teardown would close the session before the body streams.
+    with SessionLocal() as check_db:
+        if not workflow_catalog.exists(check_db, workflow_id, div):
+            raise HTTPException(
+                status_code=404, detail=f"Unknown workflow '{workflow_id}' in {div.value}"
+            )
 
     attachment = None
     if upload_file is not None and upload_file.filename:
@@ -497,9 +644,12 @@ async def run_workflow(
 @app.get("/workflows/{workflow_id}/records.csv")
 def get_workflow_records_csv(workflow_id: str, division: str = "mf", db: Session = Depends(get_db)):
     """The workflow's record file, openable straight from the use case page."""
-    if workflow_id not in workflow_repo.WORKFLOW_CATALOG:
-        raise HTTPException(status_code=404, detail=f"Unknown workflow '{workflow_id}'")
-    body = workflow_repo.records_csv(db, workflow_id, resolve_division(division))
+    div = resolve_division(division)
+    if not workflow_catalog.exists(db, workflow_id, div, include_archived=True):
+        raise HTTPException(
+            status_code=404, detail=f"Unknown workflow '{workflow_id}' in {div.value}"
+        )
+    body = workflow_repo.records_csv(db, workflow_id, div)
     return Response(
         content="﻿" + body,  # BOM so Excel reads UTF-8
         media_type="text/csv",
@@ -519,20 +669,20 @@ def reference(division: str = "mf", db: Session = Depends(get_db)):
         "division": div.value,
         "use_cases": [
             {
-                "id": wf_id,
+                "id": wf["id"],
                 "title": wf["title"],
                 "folder": wf["folder"],
                 "purpose": wf["purpose"],
                 "steps": [
                     {"title": s["title"], "kind": s["kind"], "summary": s["summary"]}
-                    for s in workflow_repo.get_definition(db, wf_id, div)["steps"]
+                    for s in workflow_repo.get_definition(db, wf["id"], div)["steps"]
                 ],
-                "rubric": llm_analyzer.WORKFLOW_RUBRICS.get(wf_id, {}).get("requirements", []),
-                "records": workflow_repo.record_summary(db, wf_id, div),
-                "approvals": counts.get(wf_id, 0),
-                "record_file": f"/workflows/{wf_id}/records.csv?division={workflow_repo.division_key(div)}",
+                "rubric": wf["rubric"],
+                "records": workflow_repo.record_summary(db, wf["id"], div),
+                "approvals": counts.get(wf["id"], 0),
+                "record_file": f"/workflows/{wf['id']}/records.csv?division={workflow_repo.division_key(div)}",
             }
-            for wf_id, wf in workflow_repo.WORKFLOW_CATALOG.items()
+            for wf in workflow_catalog.catalog(db, div)
         ],
         "glossary": workflow_repo.GLOSSARY,
         "step_kinds": workflow_repo.STEP_KINDS,
@@ -547,13 +697,15 @@ def reference(division: str = "mf", db: Session = Depends(get_db)):
 @app.get("/workflows/{workflow_id}/history")
 def workflow_history(workflow_id: str, division: str = "mf", db: Session = Depends(get_db)):
     """Every version this workflow's definition has had, newest first."""
-    if workflow_id not in workflow_repo.WORKFLOW_CATALOG:
-        raise HTTPException(status_code=404, detail=f"Unknown workflow '{workflow_id}'")
     div = resolve_division(division)
+    if not workflow_catalog.exists(db, workflow_id, div, include_archived=True):
+        raise HTTPException(
+            status_code=404, detail=f"Unknown workflow '{workflow_id}' in {div.value}"
+        )
     workflow_repo.get_definition(db, workflow_id, div)  # seeds version 1 on first look
     return {
         "workflow_id": workflow_id,
-        "title": workflow_repo.WORKFLOW_CATALOG[workflow_id]["title"],
+        "title": workflow_catalog.entry(db, workflow_id, div, include_archived=True)["title"],
         "current_version": workflow_repo.current_version(db, workflow_id, div),
         "revisions": workflow_repo.list_revisions(db, workflow_id, div),
     }

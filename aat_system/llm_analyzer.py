@@ -265,7 +265,10 @@ def _document_text(file_bytes: bytes, media_type: str, filename: str) -> str:
 
 def _instructions(rubric: dict, filename: str, property_id: Optional[str], unit_id: Optional[str]) -> str:
     requirements = "\n".join(f"{i}. {r}" for i, r in enumerate(rubric["requirements"], 1))
-    context_lines = [f"Workflow: {rubric['title']}", f"Uploaded file: {filename}"]
+    context_lines = [
+        f"Workflow: {rubric.get('title') or 'this use case'}",
+        f"Uploaded file: {filename}",
+    ]
     if property_id:
         context_lines.append(f"Property ID on file: {property_id}")
     if unit_id:
@@ -273,7 +276,11 @@ def _instructions(rubric: dict, filename: str, property_id: Optional[str], unit_
 
     return (
         "\n".join(context_lines)
-        + f"\n\nThis workflow expects: {rubric['document_kinds']}."
+        + (
+            f"\n\nThis workflow expects: {rubric['document_kinds']}."
+            if rubric.get("document_kinds")
+            else ""
+        )
         + f"\n\nGrade the attached document against these requirements:\n{requirements}\n\n"
         "Return one finding per numbered requirement, in order."
     )
@@ -286,17 +293,25 @@ def analyze_document(
     media_type: str,
     property_id: Optional[str] = None,
     unit_id: Optional[str] = None,
+    rubric: Optional[dict] = None,
 ) -> DocumentVerdict:
     """Grade one document against a workflow's rubric.
 
-    Routes through TritonAI or Anthropic depending on ``LLM_PROVIDER``. Raises
-    ValueError for an unknown workflow, and lets provider errors propagate so the
-    API layer can map them to status codes — neither route retries on another
-    model, which is deliberate.
+    Routes through TritonAI or Anthropic depending on ``LLM_PROVIDER``, and lets
+    provider errors propagate so the API layer can map them to status codes —
+    neither route retries on another model, which is deliberate.
+
+    `rubric` is passed in by the runner, which reads it from the use case being
+    run. Use cases are created at runtime now, so their requirements live in the
+    database and cannot be looked up here; WORKFLOW_RUBRICS remains the fallback
+    for the shipped set and for callers that only have an id.
     """
-    rubric = WORKFLOW_RUBRICS.get(workflow_id)
     if rubric is None:
-        raise ValueError(f"Unknown workflow: {workflow_id}")
+        rubric = WORKFLOW_RUBRICS.get(workflow_id)
+    if not rubric or not rubric.get("requirements"):
+        raise ValueError(
+            f"No requirements are set on '{workflow_id}', so there is nothing to grade against."
+        )
 
     instructions = _instructions(rubric, filename, property_id, unit_id)
 

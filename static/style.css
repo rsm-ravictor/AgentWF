@@ -1060,6 +1060,45 @@ textarea { resize: vertical; font-family: inherit; }
   color: var(--accent-text); font-weight: 700; cursor: pointer; text-decoration: underline;
 }
 
+/* ---- Authoring a use case ---- */
+
+/* The empty grid has to carry the invitation: a division ships with no use
+   cases, so this is the first thing Office/Retail shows. */
+.empty-card {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 26px; border: 1px dashed var(--border-strong); border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.empty-card h3 { font-size: var(--fs-md); }
+.empty-card p { color: var(--text-soft); max-width: 70ch; font-size: var(--fs-sm); }
+
+.uc-form-panel { margin-bottom: 16px; }
+/* Wider than the profile form's fields: a purpose and a rubric are sentences,
+   not names, so they get the full row. */
+.uc-form-panel .create-form .field-wide { grid-column: 1 / -1; }
+.uc-form-panel .create-form { align-items: start; }
+.uc-form-panel textarea { min-height: 84px; }
+.uc-form-sub { margin: 2px 0 10px; }
+.uc-form-none {
+  font-size: var(--fs-sm); margin: 0 0 10px;
+  padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-sunken);
+}
+
+/* Name plus keywords plus a remove button, on one line where there is room. */
+.doc-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px; align-items: end; margin-bottom: 10px;
+}
+.doc-row .ne-remove { height: 38px; }
+
+.uc-head-actions { display: flex; gap: 6px; align-items: center; }
+
+@media (max-width: 780px) {
+  .doc-row { grid-template-columns: 1fr; }
+  .doc-row .ne-remove { justify-self: start; }
+}
+
 /* ---- Permissions matrix ---- */
 
 .perm-matrix th span { display: inline-block; max-width: 96px; white-space: normal; line-height: 1.35; }

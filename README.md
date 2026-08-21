@@ -52,6 +52,41 @@ matrix, folders and workflow definitions follow from those.
 The use case shell is built once and reused. What differs per use case is only
 its definition, so adding one takes no new frontend code.
 
+## Use cases are records, not code
+
+Which use cases a division has lives in `workflow_definitions`, one row per use
+case per division. A use case is created, renamed, repointed and retired from the
+UI — **Use cases → New use case** on the dashboard, and **Use case settings** on
+the use case itself.
+
+Each row holds what a use case *is*: the folder it reads, the documents it
+requires (with the filename keywords that count as a match), and the requirements
+the analysis step grades against. Its steps, versions and records live in
+`workflow_steps`, `workflow_revisions` and `workflow_records`, keyed by the same
+`(workflow_id, division)` pair.
+
+Consequences worth knowing:
+
+- **Residential and Construction ship with the Phase 1 set; Office/Retail starts
+  empty** and is built up from the UI. `workflow_repo.WORKFLOW_CATALOG` is the
+  shipped set, and `workflow_catalog.SEEDED_DIVISIONS` decides who gets it.
+- **Seeding runs once per division.** A use case someone retired stays retired
+  across restarts.
+- **A new use case is runnable immediately.** It starts from the five-kind spine
+  in `workflow_repo.NEW_WORKFLOW_STEPS` — gather, read, decide, hand off, record —
+  which you then edit in the walkthrough. The runner walks whatever the definition
+  says, so a node you add is a node that executes.
+- **Two divisions may use the same slug** for different use cases. Which steps one
+  starts from is decided by whether the row was shipped, not by its slug, so
+  Retail's `vendor-insurance` does not inherit Residential's.
+- **Retiring is not deleting.** The records a use case logged and the approvals it
+  raised outlive it, and it can be reinstated with its history intact.
+
+    GET    /workflows?division=retail        the division's catalog
+    POST   /workflows                        create one
+    PATCH  /workflows/{id}                   rename, repoint, change requirements
+    POST   /workflows/{id}/archive           retire or reinstate
+
 ## One definition, three views
 
 A workflow definition is an ordered list of steps (`workflow_steps`). The
@@ -80,10 +115,11 @@ does when it reaches it:
 ## Modules
 
 - `aat_system/config.py` — divisions, roles, permissions, folder names, paths.
-- `aat_system/models.py` — users, folders, documents, leases, approvals, workflow steps, revisions and records.
-- `aat_system/workflow_repo.py` — the use case catalog, definitions, revision history, required documents, records, glossary.
+- `aat_system/models.py` — users, folders, documents, leases, approvals, workflow definitions, steps, revisions and records.
+- `aat_system/workflow_catalog.py` — which use cases a division has: create, rename, retire, and the shipped-set seeding.
+- `aat_system/workflow_repo.py` — the shipped set, definitions, revision history, required documents, records, glossary.
 - `aat_system/workflow_runner.py` — executes a use case step by step, yielding one event per state change.
-- `aat_system/llm_analyzer.py` — per-workflow rubrics and the graded verdict behind each decision.
+- `aat_system/llm_analyzer.py` — the graded verdict behind each decision. Grades against the rubric the runner passes in, which comes from the use case; the rubrics here are the shipped defaults.
 - `aat_system/connect.py` — the one LLM entry point: TritonAI's OpenAI-compatible proxy (`ask`, `ask_json`, `list_models`).
 - `aat_system/approval_repo.py` — the human-in-the-loop queue.
 - `aat_system/user_repo.py`, `auth.py`, `security.py` — roster, role scope, tokens.

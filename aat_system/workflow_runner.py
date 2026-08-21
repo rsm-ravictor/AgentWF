@@ -24,7 +24,7 @@ from typing import Iterator, Optional
 import anthropic
 from sqlalchemy.orm import Session
 
-from . import approval_repo, llm_analyzer, workflow_repo
+from . import approval_repo, llm_analyzer, workflow_catalog, workflow_repo
 from .config import Division
 
 
@@ -65,7 +65,9 @@ def run(
     outcome and a record row instead of vanishing.
     """
     definition = workflow_repo.get_definition(db, workflow_id, division)
-    wf = workflow_repo.WORKFLOW_CATALOG[workflow_id]
+    # The use case as it is configured in this division — its title names the
+    # record, and its requirements are what the analysis step grades against.
+    wf = workflow_catalog.entry(db, workflow_id, division, include_archived=True)
     steps = definition["steps"]
 
     yield {
@@ -112,6 +114,11 @@ def run(
                         media_type=attachment.media_type,
                         property_id=property_id,
                         unit_id=unit,
+                        rubric={
+                            "title": wf["title"],
+                            "document_kinds": wf["document_kinds"],
+                            "requirements": wf["rubric"],
+                        },
                     )
                 except Exception as exc:  # reported, not fatal — the run still ends properly
                     analysis_failed = _friendly(exc)

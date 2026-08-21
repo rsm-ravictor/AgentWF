@@ -83,6 +83,63 @@ class Approval(Base):
     resolved_by = Column(String, nullable=True)
 
 
+class WorkflowDefinition(Base):
+    """One use case, in one division — which paperwork it reads and what it grades.
+
+    This is the catalog: the rows here decide which use cases a division has.
+    Previously that list was a dict in code, which meant every division saw the
+    same use cases and adding one was a code change. Keying it by division is
+    what lets Office/Retail hold its own set, named its own way, without
+    pretending its paperwork is Residential's.
+
+    The identity lives here; the *behaviour* lives in workflow_steps, which is
+    already per division. A row here plus its steps is a complete use case, so
+    one can be created, renamed and retired at runtime.
+
+    `documents` and `rubric` are JSON because both are lists whose length is the
+    author's business, not the schema's: `documents` is what the intake step
+    looks for, `rubric` is what the analysis step grades against. Holding the
+    rubric here rather than in code is what makes a use case created in the UI
+    executable — without it the analysis step has nothing to check.
+    """
+
+    __tablename__ = "workflow_definitions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Slug, unique per division rather than globally: Retail may run its own
+    # "vendor-insurance" with different requirements from Residential's.
+    workflow_id = Column(String, nullable=False, index=True)
+    division = Column(Enum(Division), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    # The repository folder this use case reads. One of config.folders_for().
+    folder = Column(String, nullable=False)
+    purpose = Column(Text, nullable=True)
+    # JSON list of {name, match: [keyword], folder?} — the intake checklist.
+    documents = Column(Text, nullable=False, default="[]")
+    # JSON list of requirement strings the analysis step grades against.
+    rubric = Column(Text, nullable=False, default="[]")
+    # Free text naming what a run expects to be handed, shown to the model.
+    document_kinds = Column(String, nullable=True)
+    # Order in the dashboard grid and the use-case bar.
+    position = Column(Integer, nullable=False, default=0)
+    # Whether this row came from the shipped set. It decides which steps the use
+    # case starts from, which cannot be read off the slug: a use case created in
+    # Retail may share a slug with a shipped Residential one, and must not
+    # inherit — or reset to — that division's hand-written steps.
+    shipped = Column(Boolean, nullable=False, default=False)
+    # Retired rather than deleted: records, approvals and revision history all
+    # reference a workflow_id, and deleting the row would orphan them.
+    archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "division", name="uq_definition_workflow_division"),
+    )
+
+
 class WorkflowStep(Base):
     """One node of one workflow's definition — the single source of truth.
 
