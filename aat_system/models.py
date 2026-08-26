@@ -269,3 +269,69 @@ class WorkflowRecord(Base):
     document_name = Column(String, nullable=True)
     recorded_by = Column(String, nullable=True)
     recorded_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CoverageRegister(Base):
+    """One tenancy's lease-and-policy pairing, as it stood when it was checked.
+
+    Two jobs, deliberately in one table.
+
+    It is the **audit store**: Insurance Coverage Matching ends by writing what
+    it established — who the party is, when the lease runs out, when the policy
+    runs out, which endorsements the lease demanded and which of them the policy
+    actually carried. The Audit use case is meant to read this rather than
+    re-read every lease in the folder, so the columns are real columns and not
+    prose in a note. A date a later run has to parse back out of a sentence is a
+    date that will eventually be parsed wrong.
+
+    It is also the **ledger of what has been checked**. A dump of leases and
+    insurances gets paired and swept; the sweep has to know which pairings it
+    has already done. That question is asked of the content, not of the
+    filename: `lease_hash` and `policy_hash` are hashes of the bytes that were
+    read, so re-uploading the same lease under a new name is recognised as the
+    same lease, and a genuinely amended policy is recognised as a new one and
+    swept again.
+    """
+
+    __tablename__ = "coverage_register"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(String, nullable=False, index=True)
+    division = Column(Enum(Division), nullable=False, index=True)
+
+    # Who and where, as the documents name them. This is the pairing key as well
+    # as the audit key, so it is stored as read rather than as typed.
+    party = Column(String, nullable=True, index=True)
+    property_id = Column(String, nullable=True, index=True)
+    unit = Column(String, nullable=True)
+
+    lease_document = Column(String, nullable=True)
+    lease_hash = Column(String, nullable=True, index=True)
+    policy_document = Column(String, nullable=True)
+    policy_hash = Column(String, nullable=True, index=True)
+
+    # The two dates the Audit use case exists to watch. Stored as the documents
+    # state them — ISO where the document gave a real date, free text where it
+    # did not — because a lease that says "five years from the Commencement
+    # Date" has not given a date and inventing one here would be a fabrication.
+    lease_expiration = Column(String, nullable=True)
+    policy_expiration = Column(String, nullable=True)
+    carrier = Column(String, nullable=True)
+    policy_number = Column(String, nullable=True)
+
+    requirement_total = Column(Integer, nullable=False, default=0)
+    requirement_met = Column(Integer, nullable=False, default=0)
+    # complete | gaps — whether every line the lease required was carried.
+    result = Column(String, nullable=False, default="gaps")
+    # JSON list of the lines that were not carried, so the Audit use case can
+    # report the gap without re-running the match.
+    missing = Column(Text, nullable=True)
+
+    checked_at = Column(DateTime, default=datetime.utcnow, index=True)
+    checked_by = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "division", "lease_hash", "policy_hash", name="uq_coverage_pairing"
+        ),
+    )

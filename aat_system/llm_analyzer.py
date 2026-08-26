@@ -232,6 +232,149 @@ class DraftedNotice(BaseModel):
     )
 
 
+class CoverageRequirement(BaseModel):
+    """One insurance obligation the lease imposes, as a line that can be checked.
+
+    The unit of work for Insurance Coverage Matching. A lease states its
+    insurance duties as prose — one sentence can carry a limit, an aggregate and
+    three additional insureds — and prose cannot be ticked off. This splits that
+    prose into lines that each have exactly one answer.
+
+    `required_amount` is the same figure as `required_limit` with the money
+    parsed out, and it is what decides amber from red: a policy that carries the
+    coverage but not enough of it is a different problem from one that does not
+    carry it at all, and only a number can tell those apart.
+    """
+
+    label: str = Field(
+        description="What must be carried, as a short noun phrase a person can tick off, "
+        "e.g. 'Commercial general liability — per occurrence' or "
+        "'Landlord named as additional insured'. One obligation per entry."
+    )
+    category: Literal[
+        "liability", "property", "workers_comp", "additional_insured", "endorsement", "administrative"
+    ] = Field(
+        description="Which kind of obligation this is. 'additional_insured' for a party that must "
+        "be named, 'endorsement' for waiver of subrogation, primary/non-contributory and the like, "
+        "'administrative' for a duty about the certificate itself rather than about coverage."
+    )
+    required_limit: str = Field(
+        default="",
+        description="The limit the lease requires, worded as the lease words it, e.g. "
+        "'$2,000,000 per occurrence'. Empty string where the lease requires the coverage but "
+        "sets no figure — workers' compensation at statutory limits, for instance.",
+    )
+    required_amount: Optional[float] = Field(
+        default=None,
+        description="The figure in `required_limit` as a plain number of dollars, e.g. 2000000. "
+        "Null where the lease sets no figure. This is what a shortfall is measured against, so "
+        "give the number only when the lease genuinely states one.",
+    )
+    section: str = Field(
+        description="The section number the obligation comes from, exactly as the lease labels "
+        "it, e.g. 'Section 12(a)'."
+    )
+    quote: str = Field(
+        description="The words of the lease that impose this obligation, copied character for "
+        "character. Never paraphrased. This is what makes the requirement checkable."
+    )
+    mandatory: bool = Field(
+        default=True,
+        description="True where the lease requires it of the tenant. False only where the lease "
+        "offers it as an alternative or leaves it to the landlord's discretion.",
+    )
+
+
+class CoverageRequirements(BaseModel):
+    """The checklist a lease's insurance clauses amount to."""
+
+    party: str = Field(
+        description="The tenant the lease binds, as the lease names them. Empty if the text does "
+        "not say."
+    )
+    premises: str = Field(
+        description="The premises the lease covers, as the lease names them."
+    )
+    lease_expiration: str = Field(
+        description="When the term ends, as the lease states it. Empty string where the lease "
+        "gives no date — 'five years from the Commencement Date' is not a date, and inventing "
+        "one here would be a fabrication."
+    )
+    requirements: List[CoverageRequirement] = Field(
+        description="Every insurance obligation the lease puts on the tenant, one line per "
+        "obligation. Split a sentence carrying several duties into one entry each: a clause "
+        "requiring $2M per occurrence, $4M aggregate and three named additional insureds is "
+        "five lines, not one."
+    )
+    notes: List[str] = Field(
+        description="Anything about the insurance obligations a reviewer should know that is not "
+        "itself a checkable line — a cross-reference to an exhibit, a renewal notice period, an "
+        "obligation stated too vaguely to check."
+    )
+
+
+class CoverageCheck(BaseModel):
+    """One requirement, answered against the policy.
+
+    Three real answers and one honest refusal. `met`, `short` and `missing` are
+    the green, amber and red of the checklist; `unclear` is what a policy that
+    does not say gets, and it is never quietly promoted to `met`.
+    """
+
+    label: str = Field(
+        description="The requirement being answered, copied from the checklist line it answers "
+        "so the two can be lined up."
+    )
+    status: Literal["met", "short", "missing", "unclear"] = Field(
+        description="'met' where the policy plainly carries what the lease requires. 'short' "
+        "where the policy carries this coverage but not enough of it — a $1,000,000 limit "
+        "against a $2,000,000 requirement. 'missing' where the policy does not carry it at all. "
+        "'unclear' where the policy is silent or too ambiguous to tell. Absence is never 'met'."
+    )
+    found_limit: str = Field(
+        default="",
+        description="What the policy actually provides for this line, worded as the policy words "
+        "it. Empty string where the policy provides nothing.",
+    )
+    found_amount: Optional[float] = Field(
+        default=None,
+        description="The figure in `found_limit` as a plain number of dollars. Null where the "
+        "policy states no figure.",
+    )
+    evidence: str = Field(
+        description="The words of the policy that answer this line, copied character for "
+        "character so they can be found and marked in the document. Empty string where the "
+        "policy says nothing — an empty quote is the correct answer for a missing coverage, and "
+        "inventing one would put a mark on a passage that does not say what it is cited for."
+    )
+    note: str = Field(
+        description="One sentence on why this is the status. For a shortfall, say what was "
+        "required against what was found."
+    )
+
+
+class CoverageMatch(BaseModel):
+    """What reading a policy against a lease's checklist established."""
+
+    carrier: str = Field(description="The insurer named on the policy. Empty if not stated.")
+    policy_number: str = Field(description="The policy number. Empty if not stated.")
+    policy_expiration: str = Field(
+        description="When the policy lapses, as the document states it. Empty if not stated."
+    )
+    insured: str = Field(
+        description="The named insured on the policy, as the policy names them. This is what "
+        "says whether the policy even belongs to the tenant the lease binds."
+    )
+    checks: List[CoverageCheck] = Field(
+        description="Exactly one entry per checklist line, in the order the checklist gave them. "
+        "Never drop a line because the policy is silent about it — that is a 'missing', and it is "
+        "the whole point of the exercise."
+    )
+    summary: str = Field(
+        description="Two or three sentences on where the policy stands against the lease."
+    )
+
+
 class ClauseMatch(BaseModel):
     """One section of an agreement, matched to what was reported."""
 
@@ -312,6 +455,54 @@ the section number the agreement itself uses.
 Return no match rather than a weak one. An agreement that does not address the conduct is a \
 real and useful answer; a section stretched to fit is not. Put anything you weighed and ruled \
 out in `also_considered`, so the reading can be checked."""
+
+
+COVERAGE_REQ_SYSTEM_PROMPT = """You read commercial leases for AAT, a real estate asset and lease \
+management company. You are given one lease. You turn its insurance obligations into a checklist \
+that can be ticked off against a certificate of insurance.
+
+Read the whole lease, not one section. Insurance duties are routinely split: the limits sit in the \
+insurance section, the certificate and additional-insured duties often sit in a separate section \
+later on, and an exhibit can add more. Find them wherever they are, and give each one the section \
+number the lease itself uses.
+
+One obligation per line. A single sentence requiring $2,000,000 per occurrence, $4,000,000 in the \
+aggregate, and three named additional insureds is five separate lines, because a certificate can \
+satisfy any one of them and fail the others. A line that bundles two duties cannot be answered.
+
+Only what the lease requires of the tenant. Coverage the landlord carries is not the tenant's \
+obligation and does not belong on the checklist.
+
+Quote the words that impose each obligation, character for character, from the text you were \
+given. The quote is what the requirement is later checked and marked against, so a paraphrase \
+makes the line unverifiable. Where the lease states a dollar figure, put it in `required_amount` \
+as a plain number as well; where it states none, leave it null rather than guessing at a market \
+norm."""
+
+
+COVERAGE_MATCH_SYSTEM_PROMPT = """You check certificates and policies of insurance for AAT, a real \
+estate asset and lease management company. You are given a checklist of what a lease requires and \
+one certificate or policy. You answer every line of the checklist against that document.
+
+Answer every line, in the order given. A line the document is silent about is 'missing' — that \
+silence is the finding the whole check exists to produce, so never drop the line and never let \
+absence read as satisfaction.
+
+Distinguish short from missing, because they are different conversations with a tenant. Coverage \
+that is carried but below the required limit is 'short': say what was required and what was found. \
+Coverage that is not carried at all is 'missing'. Where the document mentions something related \
+but does not let you tell — an endorsement referred to but not described, a limit stated without \
+saying what it applies to — that is 'unclear', not 'met'.
+
+Compare amounts as amounts. A $2,000,000 aggregate against a $4,000,000 requirement is short even \
+though both are stated in millions, and a per-occurrence limit is not an aggregate limit. Check \
+that the named insured is actually the party the lease binds; a certificate for a different entity \
+satisfies nothing.
+
+Quote your evidence character for character out of the document you were given. That quote is used \
+to mark the passage in the document, so an invented or tidied quote puts a mark on a passage that \
+does not say what it is cited for. Where there is no evidence because the coverage is absent, \
+return an empty quote — that is the correct answer, not a failure."""
 
 
 DRAFT_SYSTEM_PROMPT = """You draft correspondence for AAT, a real estate asset and lease management company. You are \
@@ -860,6 +1051,237 @@ def draft_from_clause(
     if response.stop_reason == "refusal":
         raise RuntimeError("The model declined to draft this notice.")
     return response.parsed_output
+
+
+# ---------------- Insurance Coverage Matching ----------------
+#
+# Three calls, in the order the work actually happens: read the lease into a
+# checklist, answer the checklist against the certificate, then write the notice
+# from the answers. They are separate calls for the same reason grading and
+# drafting are separate — each wants instructions the others would undermine.
+#
+# The first two are deliberately not merged. A single call given both documents
+# tends to read the certificate first and then find requirements that suit it,
+# which produces a checklist that always passes. Extracting what the lease
+# demands *before* the policy is in view is what makes the check mean anything.
+
+
+def read_coverage_requirements(
+    lease_text: str,
+    filename: str = "lease",
+    company: str = "",
+    property_id: str = "",
+    unit_id: str = "",
+) -> CoverageRequirements:
+    """Turn a lease's insurance clauses into a checklist that can be ticked off.
+
+    The certificate is deliberately absent here. This call answers only "what
+    does the lease demand", so that the answer cannot be shaped by what the
+    tenant happens to have supplied.
+
+    Offsets are not asked for, as with `find_clause`: the model quotes the words
+    that impose each obligation, and where that passage sits is computed by
+    matching in `coverage_match.locate_requirements`.
+    """
+    if not (lease_text or "").strip():
+        raise ValueError("There is no lease text to read.")
+
+    given = [f"Lease on file: {filename}"]
+    if company:
+        given.append(f"Company given: {company}")
+    if property_id:
+        given.append(f"Property given: {property_id}")
+    if unit_id:
+        given.append(f"Unit given: {unit_id}")
+
+    prompt = (
+        "<lease>\n" + lease_text + "\n</lease>\n\n"
+        + "\n".join(given)
+        + "\n\nList every insurance obligation this lease places on the tenant, one line per "
+        "obligation, each with the section number the lease gives it and the words that impose "
+        "it quoted exactly. Include the certificate and additional-insured duties wherever in "
+        "the lease they sit, not only the ones in the insurance section."
+    )
+
+    if PROVIDER == "tritonai":
+        return connect.ask_json(
+            prompt,
+            schema=CoverageRequirements,
+            model=TRITONAI_MODEL,
+            system=COVERAGE_REQ_SYSTEM_PROMPT,
+            temperature=0,
+            max_tokens=16000,
+        )
+
+    response = _client().messages.parse(
+        model=ANTHROPIC_MODEL,
+        max_tokens=16000,
+        system=COVERAGE_REQ_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        output_format=CoverageRequirements,
+    )
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to read this lease.")
+    return response.parsed_output
+
+
+def match_coverage(
+    requirements: CoverageRequirements,
+    policy_text: str,
+    filename: str = "certificate",
+) -> CoverageMatch:
+    """Answer every checklist line against the certificate on file.
+
+    The checklist goes in as the question, numbered, so the reply can be lined
+    back up with it line for line. Every line must come back — a certificate
+    silent about property coverage produces a `missing`, which is the finding the
+    use case exists to surface, not an omission.
+    """
+    if not (policy_text or "").strip():
+        raise ValueError("There is no certificate text to check.")
+    if not requirements.requirements:
+        raise ValueError("The lease produced no insurance requirements to check against.")
+
+    checklist = "\n".join(
+        f"{i + 1}. {r.label}"
+        + (f" — requires {r.required_limit}" if r.required_limit else "")
+        + f" [{r.section}] "
+        + f"lease wording: “{r.quote}”"
+        for i, r in enumerate(requirements.requirements)
+    )
+
+    prompt = (
+        "<certificate name=\"" + filename + "\">\n" + policy_text + "\n</certificate>\n\n"
+        + "<checklist>\n" + checklist + "\n</checklist>\n\n"
+        + (f"The lease binds: {requirements.party}\n" if requirements.party else "")
+        + (f"The premises: {requirements.premises}\n" if requirements.premises else "")
+        + "\nAnswer every numbered line above against this certificate, in the same order and "
+        "using the same label, one entry per line. Quote your evidence out of the certificate "
+        "exactly. Where the certificate carries the coverage but not enough of it, mark it short "
+        "and give both figures. Where it does not carry it at all, mark it missing and leave the "
+        "evidence empty."
+    )
+
+    if PROVIDER == "tritonai":
+        return connect.ask_json(
+            prompt,
+            schema=CoverageMatch,
+            model=TRITONAI_MODEL,
+            system=COVERAGE_MATCH_SYSTEM_PROMPT,
+            temperature=0,
+            max_tokens=16000,
+        )
+
+    response = _client().messages.parse(
+        model=ANTHROPIC_MODEL,
+        max_tokens=16000,
+        system=COVERAGE_MATCH_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        output_format=CoverageMatch,
+    )
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to read this certificate.")
+    return response.parsed_output
+
+
+def draft_from_coverage(
+    requirements: CoverageRequirements,
+    match: CoverageMatch,
+    lease_text: str,
+    company: str = "",
+    property_id: str = "",
+    unit_id: str = "",
+    sender: str = "",
+) -> DraftedNotice:
+    """Write the tenant the letter the gaps call for.
+
+    Grouped rather than listed: a tenant reading this needs to know what is short
+    and what is absent, and those are two different asks. Lines that passed are
+    named too — a notice that lists only failures reads as though nothing on the
+    certificate was right, and the tenant then re-sends everything.
+
+    The lease text goes in again so the requirement can be quoted off the source
+    rather than out of the checklist's copy of it.
+    """
+    by_status = {"short": [], "missing": [], "unclear": [], "met": []}
+    for check in match.checks:
+        by_status.setdefault(check.status, []).append(check)
+
+    def block(title: str, checks: list) -> str:
+        if not checks:
+            return ""
+        lines = "\n".join(
+            f"- {c.label}: required {_required_for(requirements, c.label) or 'as stated in the lease'}; "
+            f"certificate shows {c.found_limit or 'nothing'}. {c.note}"
+            for c in checks
+        )
+        return f"{title}\n{lines}\n\n"
+
+    findings = (
+        block("BELOW THE REQUIRED AMOUNT", by_status.get("short", []))
+        + block("MISSING ENTIRELY", by_status.get("missing", []))
+        + block("COULD NOT BE CONFIRMED FROM THE CERTIFICATE", by_status.get("unclear", []))
+        + block("IN GOOD STANDING", by_status.get("met", []))
+    )
+
+    given = [f"{label}: {value}" for label, value in (
+        ("Company", company), ("Property", property_id), ("Unit", unit_id)
+    ) if value]
+
+    prompt = (
+        "<lease>\n" + lease_text + "\n</lease>\n\n"
+        + ("Given with the run:\n" + "\n".join(given) + "\n\n" if given else "")
+        + f"Tenant on the lease: {requirements.party or 'not stated'}\n"
+        + f"Premises: {requirements.premises or 'not stated'}\n"
+        + f"Named insured on the certificate: {match.insured or 'not stated'}\n"
+        + f"Carrier: {match.carrier or 'not stated'}; policy {match.policy_number or 'not stated'}; "
+        + f"expires {match.policy_expiration or 'not stated'}\n\n"
+        + "The check that was made, line by line:\n\n"
+        + findings
+        + "Write the email to the tenant that follows from this. It must: open by naming the "
+        "certificate reviewed and the lease section it was checked against; list what is below "
+        "the required amount, giving the required figure and the figure on the certificate for "
+        "each; list what is missing entirely; name what was confirmed as in good standing, "
+        "briefly, so the tenant does not re-send it; and close by asking for an updated "
+        "certificate. Quote the lease's own wording for any requirement you assert, with its "
+        "section number, and put every such passage in `quoted_clauses`. Put anything the lease "
+        "or the certificate did not support in `unresolved` and leave it out of the body."
+        + (f"\nSign it from {sender}." if sender else "")
+    )
+
+    if PROVIDER == "tritonai":
+        return connect.ask_json(
+            prompt,
+            schema=DraftedNotice,
+            model=TRITONAI_MODEL,
+            system=DRAFT_SYSTEM_PROMPT,
+            temperature=0,
+            max_tokens=16000,
+        )
+
+    response = _client().messages.parse(
+        model=ANTHROPIC_MODEL,
+        max_tokens=16000,
+        system=DRAFT_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        output_format=DraftedNotice,
+    )
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to draft this notice.")
+    return response.parsed_output
+
+
+def _required_for(requirements: CoverageRequirements, label: str) -> str:
+    """The limit the lease set for a checklist line, looked up by its label.
+
+    The match reply carries the label it was asked about but not the requirement
+    behind it, and the notice has to state both figures to be worth sending.
+    """
+    target = (label or "").strip().lower()
+    for req in requirements.requirements:
+        if (req.label or "").strip().lower() == target:
+            return req.required_limit
+    return ""
 
 
 def _via_tritonai(

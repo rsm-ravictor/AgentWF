@@ -45,6 +45,8 @@ AAT_REQUIREMENTS_FOLDER = "AAT Company Requirements/Documents"
 STEP_KINDS = {
     "intake": "Gathers the documents the workflow needs",
     "analysis": "Reads and grades what was gathered",
+    "requirements": "Reads an agreement into the checklist it demands",
+    "match": "Answers that checklist against the document on file",
     "draft": "Writes the correspondence the outcome calls for",
     "decision": "Applies the pass/fail rule",
     "human": "Hands the outcome to a person",
@@ -153,14 +155,56 @@ OFFICE_CATALOG = {
             },
         ],
     },
+    # Two instruments in, one letter out. The lease says what must be carried and
+    # the certificate says what is carried; the use case exists because comparing
+    # them by hand is slow and comparing them by keyword does not work — a lease
+    # requiring "$4,000,000 in the general aggregate" and a certificate showing
+    # "General Aggregate $2,000,000" share almost every word and disagree on the
+    # only thing that matters.
+    #
+    # There is deliberately no coverage-matrix document any more. The checklist is
+    # read out of the lease each run rather than kept as a file, because a matrix
+    # on file goes stale the moment the lease is amended and nothing tells you.
     "coverage-matching": {
         "title": "Insurance Coverage Matching Workflow",
         "folder": "Vendor Insurances",
-        "purpose": "Build the required coverage matrix from the governing agreement, then grade the policy on file against it.",
+        "purpose": "Read the lease's insurance obligations into a checklist, then check the certificate of insurance against every line and draft the tenant the gaps.",
         "documents": [
-            {"name": "Governing agreement", "match": ["lease", "agreement", "contract"], "folder": "Lease Agreements"},
-            {"name": "Coverage matrix", "match": ["matrix", "checklist", "schedule"], "folder": "Checklists"},
-            {"name": "Submitted policy", "match": ["policy", "insurance", "certificate"]},
+            {
+                "name": "Governing lease",
+                "match": ["lease", "agreement", "contract"],
+                "folder": "Lease Agreements",
+            },
+            {
+                "name": "Certificate of insurance",
+                "match": ["coi", "certificate", "insurance", "policy"],
+            },
+        ],
+        # The same three values that identify a tenancy for Clause Search. They
+        # locate both documents here: the lease in Lease Agreements and the
+        # certificate in Vendor Insurances, scored the same way in each.
+        "run_inputs": [
+            {
+                "name": "company",
+                "label": "Name of company",
+                "type": "text",
+                "role": "lease_lookup",
+                "placeholder": "Coastal Retail Group LLC",
+            },
+            {
+                "name": "property_id",
+                "label": "Property",
+                "type": "text",
+                "role": "lease_lookup",
+                "placeholder": "La Jolla Commons",
+            },
+            {
+                "name": "unit",
+                "label": "Unit #",
+                "type": "text",
+                "role": "lease_lookup",
+                "placeholder": "Suite 214",
+            },
         ],
     },
     # Runs from an incident rather than from a submission: the notification

@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Insurance Compliance Matching</title>
+<style>
+  :root{
+    --navy: #0c1f38;
+    --navy-deep: #081527;
+    --navy-mid: #16304f;
+    --white: #ffffff;
+    --cream: #f7f5f0;
+    --gold: #b8923f;
+    --line: #d9dce2;
+    --text-soft: #5b6472;
+    --green: #2f8f4e;
+    --green-bg: #e6f5ea;
+    --yellow: #b8860b;
+    --yellow-bg: #fdf3d9;
+    --red: #b13a3a;
+    --red-bg: #fbe9e9;
+    --gray-bg: #eef0f3;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--cream);
+    color: var(--navy-deep);
+  }
+  .serif{ font-family: "Times New Roman", Times, serif; }
+
+  header.topbar{
+    background: var(--navy);
+    color: var(--white);
+    padding: 16px 32px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  header.topbar .brand{
+    font-size:14px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight:600;
+  }
+  header.topbar .brand span{ color: var(--gold); }
+  header.topbar .sub{ font-size:11px; color:#b9c3d1; }
+
+  .wrap{ max-width: 1220px; margin: 0 auto; padding: 24px 24px 90px; }
+
+  /* Stepper */
+  .stepper{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    margin-bottom: 28px;
+    padding: 20px 12px;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+  }
+  .step{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    text-align:center;
+    position:relative;
+  }
+  .step:not(:last-child)::after{
+    content:"";
+    position:absolute;
+    top: 15px;
+    left: 50%;
+    width: 100%;
+    height: 2px;
+    background: var(--line);
+    z-index:0;
+  }
+  .step.done:not(:last-child)::after{ background: var(--gold); }
+  .step-dot{
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--white);
+    border: 2px solid var(--line);
+    color: var(--text-soft);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 13px; font-weight:700;
+    position:relative; z-index:1;
+    transition: all 0.3s;
+  }
+  .step.active .step-dot{
+    border-color: var(--gold);
+    background: var(--gold);
+    color: var(--white);
+    box-shadow: 0 0 0 4px rgba(184,146,63,0.18);
+  }
+  .step.done .step-dot{
+    border-color: var(--gold);
+    background: var(--navy);
+    color: var(--white);
+  }
+  .step-label{
+    margin-top: 8px;
+    font-size: 11.5px;
+    font-weight:600;
+    color: var(--text-soft);
+    max-width: 110px;
+    line-height:1.3;
+  }
+  .step.active .step-label, .step.done .step-label{ color: var(--navy-deep); }
+
+  /* Intake */
+  .intake-card{
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 28px;
+  }
+  .intake-card h1{ font-size: 19px; margin: 0 0 4px; }
+  .intake-card .desc{ font-size: 13px; color: var(--text-soft); margin: 0 0 22px; }
+  .intake-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  .doc-pick{
+    border: 1.5px dashed var(--line);
+    border-radius: 3px;
+    padding: 22px;
+    text-align:center;
+  }
+  .doc-pick .doc-icon{
+    width: 44px; height: 54px;
+    margin: 0 auto 12px;
+    background: var(--cream);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    position:relative;
+  }
+  .doc-pick .doc-icon::before{
+    content:""; position:absolute; top:10px; left:8px; right:8px; height:2px; background:#c7cad0;
+  }
+  .doc-pick .doc-icon::after{
+    content:""; position:absolute; top:18px; left:8px; right:14px; height:2px; background:#c7cad0;
+  }
+  .doc-pick .label{ font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color: var(--navy); margin-bottom:4px; }
+  .doc-pick .filename{ font-size: 13px; color: var(--navy-deep); margin-top:6px; }
+  .doc-pick .hint{ font-size: 11.5px; color: var(--text-soft); }
+  .cta-row{ margin-top: 24px; display:flex; justify-content:flex-end; }
+  .btn-primary{
+    background: var(--navy); color: var(--white); border:none;
+    padding: 11px 26px; font-size: 13px; font-weight:600; letter-spacing:0.03em;
+    border-radius: 2px; cursor:pointer; transition: background 0.15s;
+  }
+  .btn-primary:hover{ background: var(--navy-mid); }
+  .btn-primary:disabled{ background:#9aa3b0; cursor:default; }
+  .btn-secondary{
+    background: var(--white); color: var(--navy); border: 1px solid var(--navy);
+    padding: 9px 18px; font-size: 12.5px; font-weight:600; border-radius:2px; cursor:pointer;
+  }
+  .btn-secondary:hover{ background: var(--cream); }
+
+  /* Main stage */
+  .stage{ display:none; margin-top: 6px; }
+  .stage.show{ display:block; }
+
+  .status-strip{
+    font-size: 12px; color: var(--text-soft); display:flex; align-items:center; gap:8px;
+    margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.06em; font-weight:600;
+  }
+  .status-dot{ width:7px; height:7px; border-radius:50%; background: var(--gold); animation: pulse 1.2s infinite; }
+  .status-strip.done .status-dot{ animation:none; background:#3d7a4f; }
+  @keyframes pulse{ 0%,100%{ opacity:1; } 50%{ opacity:0.3; } }
+
+  .cols{ display:grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+  .panel{ background: var(--white); border: 1px solid var(--line); border-radius: 3px; overflow:hidden; }
+  .panel-head{
+    background: var(--navy); color: var(--white); font-size: 12px; font-weight:600;
+    letter-spacing: 0.05em; text-transform: uppercase; padding: 10px 16px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .panel-head .doc-tag{
+    font-size:9.5px; background: rgba(255,255,255,0.15); padding:2px 8px; border-radius:10px;
+    letter-spacing:0.04em;
+  }
+
+  /* Document viewer (shared lease/COI) */
+  .doc-panel-body{ display:flex; }
+  .thumb-rail{
+    width: 88px; flex-shrink:0; background: #dedcd7; border-right: 1px solid #c9c7c1;
+    padding: 14px 10px; max-height: 540px; overflow-y:auto;
+    display:flex; flex-direction:column; gap: 12px; align-items:center;
+  }
+  .thumb{
+    width: 58px; height: 76px; background: var(--white); border: 2px solid transparent;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.18); position:relative; cursor:pointer; flex-shrink:0;
+  }
+  .thumb.active{ border-color: var(--gold); }
+  .thumb .thumb-lines{ position:absolute; top:9px; left:7px; right:7px; }
+  .thumb .thumb-lines div{ height:2px; background:#d5d3cd; margin-bottom:4px; }
+  .thumb .thumb-num{ position:absolute; bottom: 4px; right: 6px; font-size: 9px; color: #9a9a95; }
+  .thumb.found::after{
+    content: ""; position:absolute; top:4px; left:4px; width:6px; height:6px; border-radius:50%; background: var(--gold);
+  }
+
+  .doc-viewport{ flex:1; background: #e7e6e2; padding: 22px; max-height: 540px; overflow-y: auto; }
+  .doc-page{
+    background: var(--white); max-width: 620px; margin: 0 auto 18px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12); padding: 40px 48px; position:relative;
+  }
+  .doc-page.lease-page{ font-family: "Times New Roman", Times, serif; color:#1c1c1c; }
+  .doc-page.lease-page p{ margin:0 0 14px; font-size:13px; line-height:1.8; text-align:justify; }
+  .doc-page.lease-page p.sec-head{ font-weight:bold; text-decoration:underline; margin-bottom:8px; }
+  .doc-letterhead{ text-align:center; margin-bottom: 22px; padding-bottom: 14px; border-bottom: 1px solid #ccc; }
+  .doc-letterhead .doc-title{ font-size: 14px; letter-spacing: 0.07em; text-transform: uppercase; font-weight:bold; }
+  .doc-letterhead .doc-sub{ font-size: 10.5px; color: #666; margin-top: 4px; font-family: -apple-system, sans-serif; }
+
+  .clause{ transition: background 0.5s ease, box-shadow 0.5s ease; border-radius: 1px; padding: 1px 2px; }
+  .clause.sweeping{ background: rgba(184,146,63,0.55); box-shadow: 0 0 0 1px var(--gold); }
+  .clause.done-green{ background: var(--green-bg); box-shadow: 0 0 0 1px rgba(47,143,78,0.4); }
+  .clause.done-yellow{ background: var(--yellow-bg); box-shadow: 0 0 0 1px rgba(184,134,11,0.4); }
+  .clause.done-red{ background: var(--red-bg); box-shadow: 0 0 0 1px rgba(177,58,58,0.4); }
+  .clause.done-neutral{ background: rgba(184,146,63,0.22); }
+
+  .scan-line{
+    position: sticky; top: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    opacity: 0; z-index: 5;
+  }
+  .scan-line.active{ opacity: 1; }
+
+  /* ACORD-style COI form */
+  .coi-page{ font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .coi-title-bar{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    border-bottom: 2px solid #1c1c1c; padding-bottom:8px; margin-bottom:12px;
+  }
+  .coi-title-bar .t1{ font-size:13px; font-weight:800; letter-spacing:0.03em; }
+  .coi-title-bar .t2{ font-size:9px; color:#666; margin-top:2px; }
+  .coi-title-bar .certnum{ font-size:9px; color:#666; text-align:right; }
+  .coi-grid{ display:grid; grid-template-columns: 1fr 1fr; gap: 0; border:1px solid #999; margin-bottom:10px; }
+  .coi-cell{ border-right:1px solid #999; border-bottom:1px solid #999; padding:8px 10px; font-size:10px; }
+  .coi-cell:nth-child(even){ border-right:none; }
+  .coi-cell .lab{ font-size:8px; text-transform:uppercase; letter-spacing:0.04em; color:#777; display:block; margin-bottom:3px; }
+  .coi-section-title{
+    font-size:10px; font-weight:800; background:#1c1c1c; color:#fff; padding:5px 10px; letter-spacing:0.03em;
+    margin: 14px 0 0;
+  }
+  table.coi-table{ width:100%; border-collapse:collapse; font-size:9px; margin-bottom:4px; }
+  table.coi-table th{
+    border:1px solid #999; background:#f0f0ee; padding:5px 6px; font-size:8.5px; text-transform:uppercase; letter-spacing:0.02em;
+  }
+  table.coi-table td{ border:1px solid #999; padding:6px 6px; vertical-align:top; }
+  .coi-desc{ font-size:9.5px; line-height:1.6; border:1px solid #999; padding:8px 10px; margin-top:6px; }
+  .coi-holder{ font-size:9.5px; line-height:1.6; border:1px solid #999; padding:8px 10px; margin-top:6px; }
+
+  /* Checklist panel */
+  .checklist-body{ padding: 16px 18px; max-height: 540px; overflow-y:auto; }
+  .checklist-summary{
+    display:flex; gap:10px; margin-bottom:14px; font-size:11px; font-weight:700;
+  }
+  .pill{ padding:4px 10px; border-radius:12px; }
+  .pill.green{ background: var(--green-bg); color: var(--green); }
+  .pill.yellow{ background: var(--yellow-bg); color: var(--yellow); }
+  .pill.red{ background: var(--red-bg); color: var(--red); }
+
+  .req-item{
+    border: 1px solid var(--line); border-radius: 3px; padding: 12px 14px; margin-bottom: 10px;
+    opacity:0; transform: translateY(6px); transition: opacity 0.4s, transform 0.4s, border-color 0.4s, background 0.4s;
+  }
+  .req-item.show{ opacity:1; transform:translateY(0); }
+  .req-item .req-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .req-item .req-name{ font-size: 12.5px; font-weight:700; color: var(--navy-deep); }
+  .req-item .req-required{ font-size: 11px; color: var(--text-soft); margin-top:3px; }
+  .req-item .req-status{
+    font-size: 9.5px; font-weight:800; text-transform:uppercase; letter-spacing:0.05em;
+    padding: 3px 9px; border-radius: 10px; white-space:nowrap;
+  }
+  .req-item.pending{ background: var(--gray-bg); }
+  .req-item.pending .req-status{ background:#dfe2e7; color:#6b7280; }
+  .req-item.green{ background: var(--green-bg); border-color: rgba(47,143,78,0.35); }
+  .req-item.green .req-status{ background: var(--green); color: #fff; }
+  .req-item.yellow{ background: var(--yellow-bg); border-color: rgba(184,134,11,0.35); }
+  .req-item.yellow .req-status{ background: var(--yellow); color: #fff; }
+  .req-item.red{ background: var(--red-bg); border-color: rgba(177,58,58,0.35); }
+  .req-item.red .req-status{ background: var(--red); color: #fff; }
+  .req-item .req-finding{ font-size: 11.5px; margin-top: 8px; color: var(--navy-deep); display:none; }
+  .req-item.resolved .req-finding{ display:block; }
+
+  /* Email panel */
+  .email-panel{ margin-top: 20px; max-height: 0; overflow:hidden; transition: max-height 0.6s ease; }
+  .email-panel.open{ max-height: 900px; }
+  .email-card{ background: var(--white); border: 1px solid var(--line); border-radius: 3px; overflow:hidden; }
+  .email-fields{ padding: 20px 24px 6px; }
+  .email-fields .row{ display:flex; gap:14px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size:13px; align-items:baseline; }
+  .email-fields .row .lab{ width: 70px; flex-shrink:0; color: var(--text-soft); font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:0.05em; }
+  .email-fields .row input{ border:none; font-size:13px; width:100%; color: var(--navy-deep); background:transparent; font-family:inherit; }
+  .email-fields .row input:focus{ outline:none; }
+  .email-body-area{ padding: 18px 24px 24px; font-family:"Georgia", serif; font-size: 13.5px; line-height: 1.7; }
+  .email-body-area textarea{
+    width:100%; min-height: 260px; border: 1px solid var(--line); border-radius: 2px; padding: 14px;
+    font-family: inherit; font-size: 13.5px; line-height: 1.7; color: var(--navy-deep); resize: vertical;
+  }
+  .email-actions{ display:flex; justify-content:flex-end; gap: 10px; padding: 0 24px 22px; }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background: var(--line); border-radius:4px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">AAT <span>Document Intelligence</span></div>
+  <div class="sub">Insurance Compliance Matching — Mockup</div>
+</header>
+
+<div class="wrap">
+
+  <div class="stepper" id="stepper">
+    <div class="step active" data-step="1"><div class="step-dot">1</div><div class="step-label">Intake Lease & Coverage</div></div>
+    <div class="step" data-step="2"><div class="step-dot">2</div><div class="step-label">Extract Requirements</div></div>
+    <div class="step" data-step="3"><div class="step-dot">3</div><div class="step-label">Build Checklist</div></div>
+    <div class="step" data-step="4"><div class="step-dot">4</div><div class="step-label">Scan Coverage</div></div>
+    <div class="step" data-step="5"><div class="step-dot">5</div><div class="step-label">Generate Notice</div></div>
+  </div>
+
+  <!-- Step 1: Intake -->
+  <div class="intake-card" id="intake">
+    <h1>Insurance Compliance Check</h1>
+    <p class="desc">Select the governing lease and the tenant's current Certificate of Insurance. The system will extract required endorsements from the lease, then verify coverage against them.</p>
+    <div class="intake-grid">
+      <div class="doc-pick">
+        <div class="doc-icon"></div>
+        <div class="label">Lease Document</div>
+        <div class="filename">Coastal_Retail_Group_Suite214_Lease.pdf</div>
+        <div class="hint">Auto-matched from active lease file</div>
+      </div>
+      <div class="doc-pick">
+        <div class="doc-icon"></div>
+        <div class="label">Certificate of Insurance</div>
+        <div class="filename">Coastal_Retail_Group_COI_2026.pdf</div>
+        <div class="hint">Uploaded by tenant, Aug 2026</div>
+      </div>
+    </div>
+    <div class="cta-row">
+      <button class="btn-primary" id="btn-run">Run Compliance Check</button>
+    </div>
+  </div>
+
+  <!-- Main stage -->
+  <div class="stage" id="stage">
+    <div class="status-strip" id="status-strip">
+      <span class="status-dot"></span>
+      <span id="status-text">Reading lease…</span>
+    </div>
+
+    <div class="cols">
+      <div class="panel">
+        <div class="panel-head">
+          <span id="doc-panel-title">Lease Document — Coastal Retail Group LLC</span>
+          <span class="doc-tag" id="doc-panel-tag">LEASE</span>
+        </div>
+        <div class="doc-panel-body">
+          <div class="thumb-rail" id="thumb-rail">
+            <div class="thumb active" data-page="1"><div class="thumb-lines"><div></div><div></div><div style="width:60%"></div></div><span class="thumb-num">1</span></div>
+            <div class="thumb" data-page="2"><div class="thumb-lines"><div></div><div></div><div style="width:70%"></div></div><span class="thumb-num">2</span></div>
+            <div class="thumb" data-page="3"><div class="thumb-lines"><div></div><div></div><div style="width:50%"></div></div><span class="thumb-num">3</span></div>
+          </div>
+          <div class="doc-viewport" id="doc-viewport">
+            <div class="scan-line" id="scan-line"></div>
+
+            <!-- LEASE VIEW -->
+            <div id="lease-view">
+              <div class="doc-page lease-page">
+                <div class="doc-letterhead">
+                  <div class="doc-title">Standard Commercial Lease Agreement</div>
+                  <div class="doc-sub">La Jolla Commons Property Owner, LLC — Executed Instrument</div>
+                </div>
+                <p class="sec-head">Section 22 — Insurance</p>
+                <p>Tenant shall, at its sole cost, maintain in full force during the Term commercial general liability insurance with limits of not less than <span class="clause" data-key="cgl-occ">$2,000,000 per occurrence</span> and <span class="clause" data-key="cgl-agg">$4,000,000 in the general aggregate</span>.</p>
+                <p><span class="clause" data-key="add-insured">Landlord, Landlord's property manager, and any mortgagee designated by Landlord shall be named as additional insureds on Tenant's commercial general liability policy</span>, evidenced by an endorsement attached to the Certificate of Insurance.</p>
+                <p><span class="clause" data-key="cert-holder">The Certificate of Insurance shall list Landlord as certificate holder at the notice address set forth in Section 14, including Tenant's specific suite designation</span>, and shall be kept current with Landlord's property management office at all times during the Term.</p>
+                <p><span class="clause" data-key="property-ins">Tenant shall maintain property insurance on a replacement cost basis covering Tenant's personal property, trade fixtures, and any Tenant-installed improvements within the Premises</span>.</p>
+                <p><span class="clause" data-key="workers-comp">Tenant shall maintain workers' compensation insurance in statutory amounts as required under California law for all employees working at the Premises</span>.</p>
+              </div>
+            </div>
+
+            <!-- COI VIEW (hidden until step 4) -->
+            <div id="coi-view" style="display:none;">
+              <div class="doc-page coi-page">
+                <div class="coi-title-bar">
+                  <div>
+                    <div class="t1">CERTIFICATE OF LIABILITY INSURANCE</div>
+                    <div class="t2">THIS CERTIFICATE IS ISSUED AS A MATTER OF INFORMATION ONLY AND CONFERS NO RIGHTS UPON THE CERTIFICATE HOLDER.</div>
+                  </div>
+                  <div class="certnum">DATE: 08/01/2026<br/>CERT #: 26-CRG-0417</div>
+                </div>
+                <div class="coi-grid">
+                  <div class="coi-cell"><span class="lab">Producer</span>Marsh McLennan Agency<br/>San Diego, CA</div>
+                  <div class="coi-cell"><span class="lab">Insured</span><span class="clause" data-key="insured-name">Coastal Retail Group LLC, Suite 214, La Jolla Commons, San Diego, CA 92037</span></div>
+                  <div class="coi-cell"><span class="lab">Insurer A</span>Liberty Mutual Insurance Co.</div>
+                  <div class="coi-cell"><span class="lab">Insurer B</span>Travelers Casualty & Surety Co.</div>
+                </div>
+
+                <div class="coi-section-title">Coverages</div>
+                <table class="coi-table">
+                  <tr><th>Type of Insurance</th><th>Policy Number</th><th>Eff / Exp</th><th>Limits</th></tr>
+                  <tr>
+                    <td>Commercial General Liability</td>
+                    <td>GL-4471829</td>
+                    <td>01/01/26–01/01/27</td>
+                    <td>
+                      Each Occurrence: <span class="clause" data-key="cgl-occ">$2,000,000</span><br/>
+                      General Aggregate: <span class="clause" data-key="cgl-agg">$2,000,000</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Automobile Liability</td>
+                    <td>AL-2290134</td>
+                    <td>01/01/26–01/01/27</td>
+                    <td>Combined Single Limit: $1,000,000</td>
+                  </tr>
+                  <tr>
+                    <td>Workers Compensation / Employers Liability</td>
+                    <td>WC-7738201</td>
+                    <td>01/01/26–01/01/27</td>
+                    <td><span class="clause" data-key="workers-comp">Statutory Limits — E.L. Each Accident $1,000,000</span></td>
+                  </tr>
+                </table>
+
+                <div class="coi-section-title">Description of Operations / Endorsements</div>
+                <div class="coi-desc">
+                  <span class="clause" data-key="add-insured">La Jolla Commons Property Owner, LLC is included as Additional Insured with respect to General Liability per attached endorsement CG 20 11.</span>
+                </div>
+
+                <div class="coi-section-title">Certificate Holder</div>
+                <div class="coi-holder">
+                  <span class="clause" data-key="cert-holder">La Jolla Commons Property Owner, LLC<br/>8910 University Center Lane<br/>San Diego, CA 92037</span>
+                </div>
+
+                <div class="coi-section-title" style="background:#666;">Property / Contents Coverage</div>
+                <div class="coi-desc" data-key-target="property-ins">
+                  <span style="color:#999; font-style:italic;">No property or contents coverage line item appears on file for this Certificate Holder.</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">Insurance Requirement Checklist</div>
+        <div class="checklist-body" id="checklist-body">
+          <div class="checklist-summary" id="checklist-summary" style="display:none;">
+            <span class="pill green" id="pill-green">0 Compliant</span>
+            <span class="pill yellow" id="pill-yellow">0 Below Requirement</span>
+            <span class="pill red" id="pill-red">0 Missing</span>
+          </div>
+          <div id="req-empty" style="font-size:12.5px; color:var(--text-soft); text-align:center; padding:30px 10px;">
+            Waiting for lease review…
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="email-panel" id="email-panel">
+      <div class="email-card">
+        <div class="panel-head">Generated Coverage Deficiency Notice</div>
+        <div class="email-fields">
+          <div class="row"><span class="lab">To</span><input id="e-to" value="notices@coastalretailgroup.com"/></div>
+          <div class="row"><span class="lab">Cc</span><input id="e-cc" value="propertymanagement@aat.com"/></div>
+          <div class="row"><span class="lab">Subject</span><input id="e-subject" value="Action Required — Certificate of Insurance Deficiencies, Suite 214"/></div>
+        </div>
+        <div class="email-body-area">
+          <textarea id="e-body">Attn: Facilities Manager, Coastal Retail Group LLC
+
+RE: Certificate of Insurance Review — Suite 214, La Jolla Commons
+
+We have completed our periodic review of your Certificate of Insurance on file (Cert #26-CRG-0417) against the requirements of Section 22 of your Lease. The following items require attention:
+
+BELOW REQUIRED AMOUNT
+- General Liability Aggregate: your policy currently shows a $2,000,000 general aggregate limit; the Lease requires $4,000,000. Please provide an updated certificate reflecting the correct aggregate.
+- Certificate Holder Address: your certificate lists the Landlord's address but does not include the Tenant's suite designation as required under Section 14. Please confirm this is not causing delivery issues on notices tied to this certificate.
+
+MISSING COVERAGE
+- Property Insurance: we do not have a property/contents insurance line on file covering your personal property, trade fixtures, or improvements within the Premises, as required under Section 22.
+
+CONFIRMED IN GOOD STANDING
+- Commercial General Liability (per-occurrence limit), Additional Insured endorsement, and Workers' Compensation coverage all meet the requirements on file and require no action at this time.
+
+Please provide an updated Certificate of Insurance addressing the items above within 15 business days. Let us know if you have any questions.
+
+Regards,
+Property Management
+American Assets Trust</textarea>
+        </div>
+        <div class="email-actions">
+          <button class="btn-secondary">Copy to Clipboard</button>
+          <button class="btn-secondary">Save Draft</button>
+          <button class="btn-primary">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const requirements = [
+    { key: "cgl-occ", name: "General Liability — Per Occurrence", required: "Required: $2,000,000 per occurrence" },
+    { key: "cgl-agg", name: "General Liability — General Aggregate", required: "Required: $4,000,000 aggregate" },
+    { key: "add-insured", name: "Additional Insured Endorsement", required: "Required: Landlord named as additional insured" },
+    { key: "cert-holder", name: "Certificate Holder Designation", required: "Required: Landlord + Tenant suite at notice address" },
+    { key: "property-ins", name: "Property / Contents Insurance", required: "Required: Replacement cost coverage on Tenant improvements" },
+    { key: "workers-comp", name: "Workers' Compensation", required: "Required: Statutory limits, CA employees" },
+  ];
+
+  const coiResults = {
+    "cgl-occ":     { status: "green",  finding: "COI shows $2,000,000 per occurrence — meets requirement." },
+    "cgl-agg":     { status: "yellow", finding: "COI shows $2,000,000 aggregate — below the required $4,000,000." },
+    "add-insured": { status: "green",  finding: "Endorsement CG 20 11 confirms Landlord as additional insured." },
+    "cert-holder": { status: "yellow", finding: "Landlord listed as holder, but Tenant's suite designation is missing." },
+    "property-ins":{ status: "red",    finding: "No property/contents coverage line found on the certificate." },
+    "workers-comp":{ status: "green",  finding: "Statutory workers' compensation coverage confirmed." },
+  };
+
+  const stepper = document.getElementById('stepper');
+  function setStep(n){
+    document.querySelectorAll('.step').forEach(s => {
+      const num = parseInt(s.dataset.step);
+      s.classList.remove('active','done');
+      if(num < n) s.classList.add('done');
+      else if(num === n) s.classList.add('active');
+    });
+  }
+
+  const intake = document.getElementById('intake');
+  const stage = document.getElementById('stage');
+  const statusStrip = document.getElementById('status-strip');
+  const statusText = document.getElementById('status-text');
+  const scanLine = document.getElementById('scan-line');
+  const checklistBody = document.getElementById('checklist-body');
+  const reqEmpty = document.getElementById('req-empty');
+  const checklistSummary = document.getElementById('checklist-summary');
+  const leaseView = document.getElementById('lease-view');
+  const coiView = document.getElementById('coi-view');
+  const docPanelTitle = document.getElementById('doc-panel-title');
+  const docPanelTag = document.getElementById('doc-panel-tag');
+  const emailPanel = document.getElementById('email-panel');
+
+  document.getElementById('btn-run').addEventListener('click', () => {
+    intake.style.display = 'none';
+    stage.classList.add('show');
+    setStep(2);
+    statusStrip.classList.remove('done');
+    statusText.textContent = 'Reading lease…';
+    runLeaseExtraction();
+  });
+
+  function runLeaseExtraction(){
+    scanLine.classList.add('active');
+    const clauses = Array.from(leaseView.querySelectorAll('.clause'));
+    let i = 0;
+
+    function next(){
+      if (i >= clauses.length){
+        scanLine.classList.remove('active');
+        setStep(3);
+        statusText.textContent = 'Requirements extracted — building checklist…';
+        setTimeout(() => {
+          statusStrip.classList.add('done');
+          setTimeout(startCoiScan, 700);
+        }, 900);
+        return;
+      }
+      const el = clauses[i];
+      el.classList.add('sweeping');
+      el.scrollIntoView({ behavior:'smooth', block:'center' });
+
+      setTimeout(() => {
+        el.classList.remove('sweeping');
+        el.classList.add('done-neutral');
+
+        const req = requirements.find(r => r.key === el.dataset.key);
+        if (req && !document.getElementById('req-' + req.key)){
+          if (reqEmpty.parentNode) reqEmpty.remove();
+          const item = document.createElement('div');
+          item.className = 'req-item pending';
+          item.id = 'req-' + req.key;
+          item.innerHTML = `
+            <div class="req-top">
+              <div>
+                <div class="req-name">${req.name}</div>
+                <div class="req-required">${req.required}</div>
+              </div>
+              <div class="req-status">Pending</div>
+            </div>
+            <div class="req-finding"></div>
+          `;
+          checklistBody.appendChild(item);
+          requestAnimationFrame(() => item.classList.add('show'));
+        }
+        i++;
+        setTimeout(next, 300);
+      }, 800);
+    }
+    setTimeout(next, 500);
+  }
+
+  function startCoiScan(){
+    setStep(4);
+    statusStrip.classList.remove('done');
+    statusText.textContent = 'Scanning Certificate of Insurance…';
+    docPanelTitle.textContent = 'Certificate of Insurance — Coastal Retail Group LLC';
+    docPanelTag.textContent = 'COI';
+    leaseView.style.display = 'none';
+    coiView.style.display = 'block';
+    checklistSummary.style.display = 'flex';
+    scanLine.classList.add('active');
+
+    // reset scroll
+    document.getElementById('doc-viewport').scrollTop = 0;
+
+    const clauses = Array.from(coiView.querySelectorAll('.clause'));
+    // de-dupe by key, keep order of requirements list for a sensible narrative
+    const orderedKeys = requirements.map(r => r.key);
+    const seen = new Set();
+    const orderedClauses = [];
+    orderedKeys.forEach(key => {
+      const el = coiView.querySelector(`.clause[data-key="${key}"]`);
+      if (el && !seen.has(key)){ orderedClauses.push(el); seen.add(key); }
+    });
+    // property-ins has no clause span in COI (missing) — handle separately
+    let i = 0;
+
+    function colorFor(status){
+      return status === 'green' ? 'done-green' : status === 'yellow' ? 'done-yellow' : 'done-red';
+    }
+
+    function resolveItem(key){
+      const result = coiResults[key];
+      const item = document.getElementById('req-' + key);
+      if (!item) return;
+      item.classList.remove('pending');
+      item.classList.add(result.status, 'resolved');
+      item.querySelector('.req-status').textContent =
+        result.status === 'green' ? 'Compliant' : result.status === 'yellow' ? 'Below Requirement' : 'Missing';
+      item.querySelector('.req-finding').textContent = result.finding;
+      item.scrollIntoView({ behavior:'smooth', block:'nearest' });
+      updateSummary();
+    }
+
+    function updateSummary(){
+      const items = document.querySelectorAll('.req-item.resolved');
+      let g=0,y=0,r=0;
+      items.forEach(it => {
+        if (it.classList.contains('green')) g++;
+        else if (it.classList.contains('yellow')) y++;
+        else if (it.classList.contains('red')) r++;
+      });
+      document.getElementById('pill-green').textContent = g + ' Compliant';
+      document.getElementById('pill-yellow').textContent = y + ' Below Requirement';
+      document.getElementById('pill-red').textContent = r + ' Missing';
+    }
+
+    function next(){
+      if (i >= orderedClauses.length){
+        // resolve property-ins (missing, no clause to sweep)
+        resolveItem('property-ins');
+        scanLine.classList.remove('active');
+        statusStrip.classList.add('done');
+        statusText.textContent = 'Scan complete';
+        setStep(5);
+        setTimeout(() => emailPanel.classList.add('open'), 400);
+        return;
+      }
+      const el = orderedClauses[i];
+      const key = el.dataset.key;
+      el.classList.add('sweeping');
+      el.scrollIntoView({ behavior:'smooth', block:'center' });
+
+      setTimeout(() => {
+        el.classList.remove('sweeping');
+        el.classList.add(colorFor(coiResults[key].status));
+        resolveItem(key);
+        i++;
+        setTimeout(next, 350);
+      }, 850);
+    }
+    setTimeout(next, 600);
+  }
+
+  document.querySelectorAll('.thumb').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.thumb').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>
