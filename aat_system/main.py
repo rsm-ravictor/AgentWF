@@ -17,7 +17,10 @@ from .models import User, Folder, Document, Lease
 from .auth import assert_division_access, assert_folder_access, get_allowed_folders
 from .document_repo import ingest_document, scan_expired_leases, get_or_create_folder
 from .config import (
+    ACTIVE_DIVISIONS,
     ARCHIVE_ROOT,
+    DEFAULT_DIVISION,
+    DEFAULT_DIVISION_KEY,
     DIVISION_KEYS,
     DIVISION_LABELS,
     Division,
@@ -72,7 +75,7 @@ class RequiredDocumentPayload(BaseModel):
 
 
 class UseCaseCreateRequest(BaseModel):
-    division: str = "mf"
+    division: str = DEFAULT_DIVISION_KEY
     title: str
     folder: str
     purpose: str = ""
@@ -85,7 +88,7 @@ class UseCaseCreateRequest(BaseModel):
 
 
 class UseCaseUpdateRequest(BaseModel):
-    division: str = "mf"
+    division: str = DEFAULT_DIVISION_KEY
     # All optional: a rename should not have to restate the whole use case.
     title: Optional[str] = None
     folder: Optional[str] = None
@@ -97,13 +100,13 @@ class UseCaseUpdateRequest(BaseModel):
 
 
 class UseCaseArchiveRequest(BaseModel):
-    division: str = "mf"
+    division: str = DEFAULT_DIVISION_KEY
     archived: bool = True
     updated_by: Optional[str] = None
 
 
 class DefinitionUpdateRequest(BaseModel):
-    division: str = "mf"
+    division: str = DEFAULT_DIVISION_KEY
     steps: List[StepPayload] = []
     updated_by: str = ""
 
@@ -111,21 +114,21 @@ class DefinitionUpdateRequest(BaseModel):
 class ProfileCreateRequest(BaseModel):
     name: str = ""
     email: str
-    division: str = "mf"
+    division: str = DEFAULT_DIVISION_KEY
     role: Role = Role.GENERAL
     password: str = ""
     acting_user_id: Optional[int] = None
 
 
 class RolePermissionsRequest(BaseModel):
-    division: str = "mf"
+    division: str = DEFAULT_DIVISION_KEY
     permissions: List[str] = []
     updated_by: str = ""
 
 
 class SessionResolveRequest(BaseModel):
     email: str
-    division: str = "mf"
+    division: str = DEFAULT_DIVISION_KEY
     name: str = ""
 
 
@@ -188,15 +191,20 @@ def startup_event():
                 get_or_create_folder(db, folder_name, division)
         permission_repo.ensure_seeded(db)
         user_repo.seed_roster(db)
-        # The shipped use cases, for the divisions that ship with them. Office/
-        # Retail is deliberately left empty and built up from the UI.
+        # The shipped use cases, for the divisions that ship with them. Only
+        # Office/Retail is active, so only it is seeded; the paused divisions
+        # keep whatever rows they already had.
         workflow_catalog.seed(
-            db, workflow_repo.WORKFLOW_CATALOG, llm_analyzer.WORKFLOW_RUBRICS
+            db, workflow_repo.OFFICE_CATALOG, llm_analyzer.WORKFLOW_RUBRICS
         )
         # Illustrative cases so the queue is not empty on a fresh install. They
-        # are tagged 'sample' in the UI and clearable from the dashboard.
-        for division in Division:
-            approval_repo.seed_samples(db, division)
+        # are tagged 'sample' in the UI and clearable from the dashboard. Scoped
+        # to the use cases the division actually has, so a sample can always be
+        # opened from the queue it appears in.
+        for division in ACTIVE_DIVISIONS:
+            approval_repo.seed_samples(
+                db, division, known_ids=[uc["id"] for uc in workflow_catalog.catalog(db, division)]
+            )
 
 
 # ---------------- Auth and users ----------------
@@ -281,7 +289,7 @@ def get_documents(division: Division, folder_name: str, db: Session = Depends(ge
 
 
 @app.get("/repository/documents")
-def repository_documents(division: str = "mf", folder: str = "", q: str = "", db: Session = Depends(get_db)):
+def repository_documents(division: str = DEFAULT_DIVISION_KEY, folder: str = "", q: str = "", db: Session = Depends(get_db)):
     """Documents stored in the repository, for the dashboard folder view.
 
     Unauthenticated preview endpoint — see the note on /dashboard/summary.
@@ -333,7 +341,7 @@ def _folder_counts(db: Session, division: Division) -> dict:
 
 
 @app.get("/dashboard/summary")
-def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
+def dashboard_summary(division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """Everything the division dashboard shows, in one round trip.
 
     Nothing here is seeded or estimated: folder counts come from the documents
@@ -417,7 +425,7 @@ def dashboard_summary(division: str = "mf", db: Session = Depends(get_db)):
 # ---------------- Use cases ----------------
 
 @app.get("/workflows")
-def list_workflows(division: str = "mf", include_archived: bool = False, db: Session = Depends(get_db)):
+def list_workflows(division: str = DEFAULT_DIVISION_KEY, include_archived: bool = False, db: Session = Depends(get_db)):
     """The division's use cases — the catalog the dashboard and top bar render."""
     div = resolve_division(division)
     return {
@@ -510,7 +518,7 @@ def archive_workflow(workflow_id: str, payload: UseCaseArchiveRequest, db: Sessi
 
 
 @app.get("/workflows/{workflow_id}")
-def workflow_detail(workflow_id: str, division: str = "mf", db: Session = Depends(get_db)):
+def workflow_detail(workflow_id: str, division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """Everything the use case detail page renders: definition, state, rubric."""
     div = resolve_division(division)
     if not workflow_catalog.exists(db, workflow_id, div, include_archived=True):
@@ -571,10 +579,11 @@ def reset_workflow_definition(workflow_id: str, payload: DefinitionUpdateRequest
 @app.post("/workflows/{workflow_id}/run")
 async def run_workflow(
     workflow_id: str,
-    division: str = Form("mf"),
+    division: str = Form(DEFAULT_DIVISION_KEY),
     property_id: str = Form(""),
     unit: str = Form(""),
     actor: str = Form(""),
+    inputs: str = Form(""),
     upload_file: Optional[UploadFile] = File(None),
 ):
     """Run the use case, streaming one JSON event per step as it happens.
@@ -594,6 +603,20 @@ async def run_workflow(
             raise HTTPException(
                 status_code=404, detail=f"Unknown workflow '{workflow_id}' in {div.value}"
             )
+
+    # The answers to whatever questions this use case declares, as JSON: the set
+    # differs per use case, so it cannot be a fixed list of form fields. Bad JSON
+    # is refused rather than silently dropped, because a run that quietly lost
+    # the incident summary would search the lease against nothing.
+    answers = {}
+    if inputs.strip():
+        try:
+            answers = json.loads(inputs)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Run inputs were not valid JSON.")
+        if not isinstance(answers, dict):
+            raise HTTPException(status_code=400, detail="Run inputs must be an object.")
+        answers = {str(k): ("" if v is None else str(v)) for k, v in answers.items()}
 
     attachment = None
     if upload_file is not None and upload_file.filename:
@@ -628,6 +651,7 @@ async def run_workflow(
                     unit=unit.strip(),
                     actor=actor.strip(),
                     attachment=attachment,
+                    inputs=answers,
                 ):
                     yield json.dumps(event) + "\n"
             except Exception as exc:  # a failed run must still say so
@@ -642,7 +666,7 @@ async def run_workflow(
 
 
 @app.get("/workflows/{workflow_id}/records.csv")
-def get_workflow_records_csv(workflow_id: str, division: str = "mf", db: Session = Depends(get_db)):
+def get_workflow_records_csv(workflow_id: str, division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """The workflow's record file, openable straight from the use case page."""
     div = resolve_division(division)
     if not workflow_catalog.exists(db, workflow_id, div, include_archived=True):
@@ -660,7 +684,7 @@ def get_workflow_records_csv(workflow_id: str, division: str = "mf", db: Session
 # ---------------- Reference ----------------
 
 @app.get("/reference")
-def reference(division: str = "mf", db: Session = Depends(get_db)):
+def reference(division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """The division's reference page: a rollup of every use case, plus the
     shared vocabulary those use case narratives are written against."""
     div = resolve_division(division)
@@ -695,7 +719,7 @@ def reference(division: str = "mf", db: Session = Depends(get_db)):
 
 
 @app.get("/workflows/{workflow_id}/history")
-def workflow_history(workflow_id: str, division: str = "mf", db: Session = Depends(get_db)):
+def workflow_history(workflow_id: str, division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """Every version this workflow's definition has had, newest first."""
     div = resolve_division(division)
     if not workflow_catalog.exists(db, workflow_id, div, include_archived=True):
@@ -738,7 +762,7 @@ def restore_workflow_revision(
 # ---------------- Approvals ----------------
 
 @app.get("/approvals")
-def list_approvals(division: str = "mf", workflow: str = "", db: Session = Depends(get_db)):
+def list_approvals(division: str = DEFAULT_DIVISION_KEY, workflow: str = "", db: Session = Depends(get_db)):
     """Pending cases plus a per-workflow count, so the UI can group them."""
     div = resolve_division(division)
     return {
@@ -772,7 +796,7 @@ def resolve_approval(approval_id: int, payload: ApprovalResolveRequest, db: Sess
 
 
 @app.delete("/approvals/samples")
-def delete_sample_approvals(division: str = "mf", db: Session = Depends(get_db)):
+def delete_sample_approvals(division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """Drop the illustrative cases once real ones exist."""
     removed = approval_repo.clear_samples(db, resolve_division(division))
     return {"removed": removed}
@@ -790,9 +814,11 @@ def resolve_session(payload: SessionResolveRequest, db: Session = Depends(get_db
     """
     if not payload.email.strip():
         raise HTTPException(status_code=400, detail="An email or username is required.")
-    user = user_repo.resolve_session_user(
-        db, payload.email, resolve_division(payload.division), name=payload.name
-    )
+    signing_into = resolve_division(payload.division)
+    user = user_repo.resolve_session_user(db, payload.email, signing_into, name=payload.name)
+    # An account homed to a paused division still signs in; it just does not get
+    # to land there, because nothing in the UI routes to a paused division.
+    user = user_repo.session_division(db, user, signing_into)
     return {"profile": user_repo.profile(user, db)}
 
 
@@ -808,7 +834,7 @@ def session_accounts(db: Session = Depends(get_db)):
 
 
 @app.get("/roles")
-def list_roles(division: str = "mf", db: Session = Depends(get_db)):
+def list_roles(division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """Every level, its rank, and what it grants in the given division."""
     div = resolve_division(division)
     return {
@@ -829,7 +855,7 @@ def admin_list_users(division: str = "", db: Session = Depends(get_db)):
     div = DIVISION_KEYS.get(division) if division else None
     return {
         "users": user_repo.list_users(db, division=div),
-        "roles": user_repo.role_catalog(db, div or Division.MULTIFAMILY),
+        "roles": user_repo.role_catalog(db, div or DEFAULT_DIVISION),
         "permissions": user_repo.permission_catalog(),
         "divisions": permission_repo.division_catalog(),
     }
@@ -849,7 +875,7 @@ def _permission_payload(db: Session, div: Division) -> dict:
 
 
 @app.get("/permissions")
-def get_permissions(division: str = "mf", db: Session = Depends(get_db)):
+def get_permissions(division: str = DEFAULT_DIVISION_KEY, db: Session = Depends(get_db)):
     """One division's level × permission matrix as currently configured.
 
     Per division because the levels are per division: Construction's admin is a

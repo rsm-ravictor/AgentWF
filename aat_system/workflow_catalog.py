@@ -24,7 +24,7 @@ path rather than by two modules writing the same table.
 
 import json
 import re
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -32,10 +32,53 @@ from sqlalchemy.orm import Session
 from .config import Division, folders_for
 from .models import WorkflowDefinition
 
-# Divisions that ship with the Phase 1 set. Office/Retail is deliberately
-# absent: it starts empty and is built up from the UI, which is the whole point
-# of holding the catalog in the database rather than in code.
-SEEDED_DIVISIONS = (Division.MULTIFAMILY, Division.CONSTRUCTION)
+# Divisions that ship with a set of use cases. Office/Retail is the only active
+# business line, so it is the only one seeded; Residential and Construction are
+# paused, and their existing rows stay in the database untouched.
+SEEDED_DIVISIONS = (Division.OFFICE,)
+
+
+# What a run asks for when a use case declares nothing: the property and unit
+# pair every run has always taken. Kept as the fallback rather than written into
+# every row, so a use case that never needed custom questions is unaffected.
+DEFAULT_RUN_INPUTS = (
+    {"name": "property_id", "label": "Property ID", "type": "text", "role": "context"},
+    {"name": "unit", "label": "Unit", "type": "text", "role": "context"},
+)
+
+INPUT_TYPES = ("text", "textarea")
+INPUT_ROLES = ("context", "lease_lookup", "clause_query")
+
+
+def _clean_run_inputs(inputs) -> list:
+    """Normalise the questions a run asks, dropping any that could not be shown.
+
+    An entry with no name has nowhere to put its value, and one with no label
+    has nothing to show above the box, so both are dropped here rather than
+    rendering as a nameless field someone cannot fill in.
+    """
+    cleaned = []
+    seen = set()
+    for spec in inputs or []:
+        if not isinstance(spec, dict):
+            continue
+        name = re.sub(r"[^a-z0-9_]+", "_", (spec.get("name") or "").strip().lower()).strip("_")
+        label = (spec.get("label") or "").strip()
+        if not name or not label or name in seen:
+            continue
+        seen.add(name)
+        kind = (spec.get("type") or "text").strip().lower()
+        role = (spec.get("role") or "context").strip().lower()
+        cleaned.append(
+            {
+                "name": name,
+                "label": label,
+                "type": kind if kind in INPUT_TYPES else "text",
+                "role": role if role in INPUT_ROLES else "context",
+                "placeholder": (spec.get("placeholder") or "").strip(),
+            }
+        )
+    return cleaned
 
 
 def _slug(text: str) -> str:
@@ -72,6 +115,7 @@ def _as_dict(row: WorkflowDefinition) -> dict:
         "documents": json.loads(row.documents or "[]"),
         "rubric": json.loads(row.rubric or "[]"),
         "document_kinds": row.document_kinds or "",
+        "run_inputs": json.loads(row.run_inputs or "[]") or list(DEFAULT_RUN_INPUTS),
         "position": row.position,
         "shipped": bool(row.shipped),
         "archived": bool(row.archived),
@@ -191,6 +235,7 @@ def create(
     documents: Optional[list] = None,
     rubric: Optional[list] = None,
     document_kinds: str = "",
+    run_inputs: Optional[list] = None,
     created_by: Optional[str] = None,
 ) -> dict:
     """Add a use case to one division.
@@ -218,6 +263,7 @@ def create(
         documents=json.dumps(_clean_documents(documents, folder)),
         rubric=json.dumps(_clean_rubric(rubric)),
         document_kinds=(document_kinds or "").strip() or None,
+        run_inputs=json.dumps(_clean_run_inputs(run_inputs)),
         position=(highest or 0) + 1,
         created_by=created_by,
         updated_by=created_by,
@@ -238,6 +284,7 @@ def update(
     documents: Optional[list] = None,
     rubric: Optional[list] = None,
     document_kinds: Optional[str] = None,
+    run_inputs: Optional[list] = None,
     updated_by: Optional[str] = None,
 ) -> dict:
     """Rename a use case, repoint its folder, or change what it checks.
@@ -266,6 +313,8 @@ def update(
         row.rubric = json.dumps(_clean_rubric(rubric))
     if document_kinds is not None:
         row.document_kinds = document_kinds.strip() or None
+    if run_inputs is not None:
+        row.run_inputs = json.dumps(_clean_run_inputs(run_inputs))
     row.updated_by = updated_by
 
     db.commit()
@@ -296,12 +345,22 @@ def set_archived(
     return _as_dict(row)
 
 
-def seed(db: Session, shipped: dict, rubrics: Optional[dict] = None) -> int:
+def seed(
+    db: Session,
+    shipped: dict,
+    rubrics: Optional[dict] = None,
+    divisions: Optional[Iterable[Division]] = None,
+) -> int:
     """Give each shipping division the shipped set, once.
 
     Seeds only a division with no rows at all, retired ones included, so a use
     case someone retired stays retired instead of returning on the next restart.
-    Office/Retail is not in SEEDED_DIVISIONS and so stays empty.
+    Only the divisions in SEEDED_DIVISIONS are touched by default; a paused
+    business line keeps whatever rows it already had.
+
+    `divisions` overrides that default. Which set ships is a deployment choice,
+    not a property of the seeding, so a caller that wants a specific pairing of
+    catalog and division says so rather than depending on the module constant.
 
     The shipped set and the rubrics are passed in rather than imported: they
     belong to `workflow_repo` and the analyzer, and the dependency runs the
@@ -309,7 +368,7 @@ def seed(db: Session, shipped: dict, rubrics: Optional[dict] = None) -> int:
     """
     rubrics = rubrics or {}
     created = 0
-    for division in SEEDED_DIVISIONS:
+    for division in (SEEDED_DIVISIONS if divisions is None else divisions):
         already = (
             db.query(WorkflowDefinition)
             .filter(WorkflowDefinition.division == division)
@@ -329,6 +388,7 @@ def seed(db: Session, shipped: dict, rubrics: Optional[dict] = None) -> int:
                     documents=json.dumps(wf["documents"]),
                     rubric=json.dumps(rubric.get("requirements", [])),
                     document_kinds=rubric.get("document_kinds") or None,
+                    run_inputs=json.dumps(_clean_run_inputs(wf.get("run_inputs"))),
                     position=position,
                     shipped=True,
                     created_by="AAT default",

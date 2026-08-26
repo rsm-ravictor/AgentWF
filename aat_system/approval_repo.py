@@ -7,7 +7,7 @@ open — off the same rows, rather than two lists that drift.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -15,32 +15,35 @@ from sqlalchemy.orm import Session
 from .config import Division
 from .models import Approval
 
+# Illustrative cases for a fresh queue. Each names a workflow_id, and
+# `seed_samples` drops any whose use case the division does not actually have —
+# an approval pointing at a use case that is not in the catalog is unopenable.
 SAMPLE_APPROVALS = [
     {
-        "workflow_id": "vendor-insurance",
-        "property_id": "RES-014",
+        "workflow_id": "insurance-certificate-audit",
+        "property_id": "RTL-220",
         "unit": "Common area",
         "subject": "Brightline Landscaping — COI renewal",
         "reason": "General liability limit is $1M; AAT requirements specify $2M minimum.",
-        "found": ["Vendor insurance certificate"],
+        "found": ["Certificate of insurance"],
         "missing": ["AAT requirements document"],
     },
     {
-        "workflow_id": "renters-insurance",
-        "property_id": "RES-006",
-        "unit": "3B",
+        "workflow_id": "coverage-matching",
+        "property_id": "OFF-101",
+        "unit": "Suite 300",
         "subject": "Tenant policy missing additional insured",
-        "reason": "Submitted policy does not list AAT as additional insured, as the lease requires.",
-        "found": ["Lease agreement", "Submitted insurance policy"],
-        "missing": ["Tenant checklist"],
+        "reason": "Submitted policy does not list AAT as additional insured, as the agreement requires.",
+        "found": ["Governing agreement", "Submitted policy"],
+        "missing": ["Coverage matrix"],
     },
     {
-        "workflow_id": "breach-notice",
-        "property_id": "RES-009",
-        "unit": "8C",
-        "subject": "Draft breach notice — noise violations",
-        "reason": "Third documented violation; drafted notice cites lease §12.4 and needs management sign-off before sending.",
-        "found": ["Tenant lease", "Violation report", "Prior breach history"],
+        "workflow_id": "clause-search",
+        "property_id": "RTL-118",
+        "unit": "Suite 210",
+        "subject": "After-hours noise — notice drafted, awaiting send",
+        "reason": "Draft ready to review: “Suite 210 — use of premises outside permitted hours”. The report is matched to the lease and the section is quoted; the notice has not been sent.",
+        "found": ["Incident report", "Tenant lease"],
         "missing": [],
     },
 ]
@@ -163,17 +166,28 @@ def resolve(db: Session, approval_id: int, outcome: str, resolved_by: str = "") 
     return approval
 
 
-def seed_samples(db: Session, division: Division) -> int:
+def seed_samples(db: Session, division: Division, known_ids: Optional[Iterable[str]] = None) -> int:
     """Populate the queue with illustrative cases when it is empty.
 
     Marked `source='sample'` and shown as such in the UI, so a demo queue is
     never mistaken for real work. Clearable from the dashboard.
+
+    `known_ids` is the division's catalog. A sample naming a use case that
+    division does not have is skipped rather than seeded: it would show in the
+    queue but open onto nothing, because every approval is read back through its
+    workflow. The ids are passed in rather than looked up here so this module
+    stays independent of the catalog.
     """
     if db.query(func.count(Approval.id)).filter(Approval.division == division).scalar():
         return 0
+    allowed = None if known_ids is None else set(known_ids)
+    seeded = 0
     for spec in SAMPLE_APPROVALS:
+        if allowed is not None and spec["workflow_id"] not in allowed:
+            continue
         create(db, division=division, source="sample", **spec)
-    return len(SAMPLE_APPROVALS)
+        seeded += 1
+    return seeded
 
 
 def clear_samples(db: Session, division: Division) -> int:

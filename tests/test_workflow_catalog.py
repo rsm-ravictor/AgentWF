@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from aat_system import workflow_catalog, workflow_repo
+from aat_system import llm_analyzer, workflow_catalog, workflow_repo
 from aat_system.config import Division
 from aat_system.models import Base
 
@@ -29,35 +29,53 @@ def db(tmp_path):
     )
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(bind=engine, autoflush=False, autocommit=False)()
-    workflow_catalog.seed(session, workflow_repo.WORKFLOW_CATALOG)
+    workflow_catalog.seed(
+        session, workflow_repo.WORKFLOW_CATALOG, divisions=(MF, CONSTRUCTION)
+    )
     yield session
     session.close()
 
 
 # ---------------- What each division ships with ----------------
 
-def test_the_shipping_divisions_get_the_phase_one_set(db):
+def test_a_seeded_division_gets_the_whole_set(db):
     for division in (MF, CONSTRUCTION):
         ids = {w["id"] for w in workflow_catalog.catalog(db, division)}
         assert ids == set(workflow_repo.WORKFLOW_CATALOG)
 
 
-def test_office_retail_starts_empty(db):
-    """The point of the exercise: a division builds its own set from nothing."""
+def test_a_division_that_was_not_seeded_starts_empty(db):
+    """Seeding is per division: one left out builds its own set from nothing."""
     assert workflow_catalog.catalog(db, RETAIL) == []
     assert not workflow_catalog.exists(db, "vendor-insurance", RETAIL)
 
 
+def test_office_retail_is_the_division_that_ships(db):
+    """The active business line. Residential and Construction are paused, so a
+    default seed must reach Office/Retail and leave the others alone."""
+    assert workflow_catalog.SEEDED_DIVISIONS == (RETAIL,)
+    workflow_catalog.seed(db, workflow_repo.OFFICE_CATALOG)
+    ids = {w["id"] for w in workflow_catalog.catalog(db, RETAIL)}
+    assert ids == set(workflow_repo.OFFICE_CATALOG)
+
+
+def test_every_shipped_office_use_case_has_a_rubric_and_steps():
+    """A use case with no rubric grades nothing, and no steps runs nothing."""
+    for workflow_id in workflow_repo.OFFICE_CATALOG:
+        assert workflow_id in llm_analyzer.WORKFLOW_RUBRICS
+        assert workflow_repo.default_steps(workflow_id, shipped=True) is not workflow_repo.NEW_WORKFLOW_STEPS
+
+
 def test_seeding_twice_does_not_duplicate(db):
     before = len(workflow_catalog.catalog(db, MF))
-    workflow_catalog.seed(db, workflow_repo.WORKFLOW_CATALOG)
+    workflow_catalog.seed(db, workflow_repo.WORKFLOW_CATALOG, divisions=(MF,))
     assert len(workflow_catalog.catalog(db, MF)) == before
 
 
 def test_a_retired_use_case_does_not_come_back_on_the_next_seed(db):
     """Restarting the app must not undo someone taking a use case out of service."""
     workflow_catalog.set_archived(db, "breach-notice", MF, True)
-    workflow_catalog.seed(db, workflow_repo.WORKFLOW_CATALOG)
+    workflow_catalog.seed(db, workflow_repo.WORKFLOW_CATALOG, divisions=(MF,))
     live = {w["id"] for w in workflow_catalog.catalog(db, MF)}
     assert "breach-notice" not in live
 

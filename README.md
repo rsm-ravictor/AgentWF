@@ -5,30 +5,48 @@ document repository, and use cases that read documents, grade them against an
 explicit rubric, and hand every outcome to a person.
 
 `CONTEXT 2.0.md` is the source of truth for what this repo is and how it is
-structured. This file is the short version of how to run it.
+structured. `USE-CASES.md` is the three Office/Retail use cases in detail — what
+each reads, grades against, and decides. This file is the short version of how to
+run it.
 
 ## The shape of the app
 
 The screens, in the order a user meets them:
 
-1. **Login** — company name, then a division: Residential/Multifamily, Office/Retail
-   or Construction. The division scopes every folder, use case, record and account
-   from that point on, and the accounts offered below the form are that division's.
+1. **Login** — company name, then the division. Office/Retail is the only active
+   one; Residential/Multifamily and Construction are paused. The division scopes
+   every folder, use case, record and account from that point on, and the accounts
+   offered below the form are that division's.
 2. **Division dashboard** — the folders documents live in, and one tile per use
    case. Every tile is the same shape whatever the use case does.
-3. **Use case detail** — a persistent top bar to jump between use cases, then a
-   fixed layout: the workflow diagram on the left (2/3, with an enlarge overlay),
-   the written walkthrough on the right (1/3, editable — the diagram redraws from
-   your edits as you type), and a run footer with a live status bar and the outcome.
-4. **Reference** — a rollup of every use case in the division, the change log of
-   workflow definitions (every version, what changed, and a roll-back action), and
-   the shared vocabulary their narratives are written against.
+3. **Use case detail** — a persistent top bar to jump between use cases, then two
+   tabs, because a use case is read for two different reasons:
+   - **Reference** — what this use case *is*. The workflow diagram (2/3, with an
+     enlarge overlay) beside the written walkthrough (1/3, editable — the diagram
+     redraws from your edits as you type), then the requirements it grades against
+     and every version its definition has had, with a roll-back action.
+   - **Execution** — what happens when it runs. The run controls, a live status
+     bar, the log, the outcome, and what the use case has on file: required
+     documents, outstanding approvals and its record file.
+
+   Both panes stay mounted, so a run keeps streaming while you read the
+   walkthrough, and the diagram's step rings stay live on either tab.
+4. **Reference** — the index: one card per use case in the division, plus the step
+   types and the shared vocabulary their narratives are written against. A card
+   opens that use case's own Reference tab.
 5. **Settings** (user menu) — accounts and access together, per division: create a
    profile with the level it holds, manage the roster, and set what every level is
    allowed to do. Levels are fixed in code; what a level grants is data, keyed by
    division, and every gate reads it.
 
 ## Divisions and levels
+
+**Office/Retail is the only active division.** Residential/Multifamily and
+Construction are paused: their folders, users, permission sets, use cases and
+records all stay in the database, but nothing in the UI routes to them. The pause
+is two constants in `config.py` — `DEFAULT_DIVISION` and `ACTIVE_DIVISIONS` — so
+restoring a business line is adding it back to that tuple, not a migration.
+
 
 Three business lines — Residential/Multifamily, Office/Retail, Construction — each
 with **its own super admin**. The title belongs to a division, not the company, so
@@ -67,9 +85,12 @@ the analysis step grades against. Its steps, versions and records live in
 
 Consequences worth knowing:
 
-- **Residential and Construction ship with the Phase 1 set; Office/Retail starts
-  empty** and is built up from the UI. `workflow_repo.WORKFLOW_CATALOG` is the
-  shipped set, and `workflow_catalog.SEEDED_DIVISIONS` decides who gets it.
+- **Office/Retail ships with three use cases**: Insurance Certificate Audit,
+  Insurance Coverage Matching and Clause Search. `USE-CASES.md` is what each one
+  reads and decides. `workflow_repo.OFFICE_CATALOG` is that set and
+  `workflow_catalog.SEEDED_DIVISIONS` decides who gets it. `WORKFLOW_CATALOG` is
+  the paused residential set, kept because Residential and Construction rows
+  still reference it.
 - **Seeding runs once per division.** A use case someone retired stays retired
   across restarts.
 - **A new use case is runnable immediately.** It starts from the five-kind spine
@@ -96,30 +117,36 @@ what stops the picture, the words and the execution drifting into three differen
 answers.
 
 Because that definition is also what a run executes, every version of it is kept
-in `workflow_revisions`: the Reference page lists what changed, who changed it and
-when, and rolls any past version back as the live one. A rollback is recorded as a
-new version, not a rewind, so it can be undone too.
+in `workflow_revisions`: the use case's Reference tab lists what changed, who
+changed it and when, and rolls any past version back as the live one. A rollback
+is recorded as a new version, not a rewind, so it can be undone too.
 
 Each step carries a `kind`, which colours its node and decides what the runner
 does when it reaches it:
 
 | kind | what happens at that step |
 | --- | --- |
-| `intake` | Check the required documents against the repository |
-| `analysis` | Grade an attached document against the rubric, or report what is on file |
+| `intake` | Check the required documents against the repository, and read the ones that are there |
+| `analysis` | Grade an attached document against the rubric, with the on-file documents alongside it |
+| `draft` | Write the correspondence the reading calls for, quoting the documents verbatim |
 | `decision` | Apply the pass rule to everything gathered so far |
 | `human` | Queue an approval case when the run could not clear on its own |
 | `record` | Write the run to the workflow's record file |
 | `note` | Descriptive only — reported, but takes no action |
+
+An intake step does not only count documents — it opens the ones it matched, so a
+later step can quote out of them. Clause Search depends on that: the clause it
+quotes sits in the lease on file, not in the attachment. `draft` is a second
+model call, and only Clause Search uses it.
 
 ## Modules
 
 - `aat_system/config.py` — divisions, roles, permissions, folder names, paths.
 - `aat_system/models.py` — users, folders, documents, leases, approvals, workflow definitions, steps, revisions and records.
 - `aat_system/workflow_catalog.py` — which use cases a division has: create, rename, retire, and the shipped-set seeding.
-- `aat_system/workflow_repo.py` — the shipped set, definitions, revision history, required documents, records, glossary.
+- `aat_system/workflow_repo.py` — the shipped sets (`OFFICE_CATALOG` active, `WORKFLOW_CATALOG` paused), definitions, revision history, required documents, records, glossary.
 - `aat_system/workflow_runner.py` — executes a use case step by step, yielding one event per state change.
-- `aat_system/llm_analyzer.py` — the graded verdict behind each decision. Grades against the rubric the runner passes in, which comes from the use case; the rubrics here are the shipped defaults.
+- `aat_system/llm_analyzer.py` — the graded verdict behind each decision, and the drafting that follows it. Grades against the rubric the runner passes in, which comes from the use case; the rubrics here are the shipped defaults. `draft_notice` writes the correspondence a Draft step produces.
 - `aat_system/connect.py` — the one LLM entry point: TritonAI's OpenAI-compatible proxy (`ask`, `ask_json`, `list_models`).
 - `aat_system/approval_repo.py` — the human-in-the-loop queue.
 - `aat_system/user_repo.py`, `auth.py`, `security.py` — roster, role scope, tokens.

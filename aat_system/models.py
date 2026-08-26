@@ -120,6 +120,15 @@ class WorkflowDefinition(Base):
     rubric = Column(Text, nullable=False, default="[]")
     # Free text naming what a run expects to be handed, shown to the model.
     document_kinds = Column(String, nullable=True)
+    # JSON list of {name, label, type, role, placeholder} — what a run asks the
+    # person starting it to type. Held per use case because the questions differ:
+    # an insurance audit needs a property and a unit, while Clause Search needs
+    # the company, the premises and a summary of what happened. `role` is what
+    # makes an entry more than a form field: 'lease_lookup' values identify which
+    # agreement to read, and a 'clause_query' value is the text the clause search
+    # is run against. A use case with none declared falls back to the property
+    # and unit pair every run has always taken.
+    run_inputs = Column(Text, nullable=True)
     # Order in the dashboard grid and the use-case bar.
     position = Column(Integer, nullable=False, default=0)
     # Whether this row came from the shipped set. It decides which steps the use

@@ -23,6 +23,7 @@ from aat_system.config import Division, Role
 from aat_system.models import Base, Document, Folder, User
 
 MF = Division.MULTIFAMILY
+CONSTRUCTION = Division.CONSTRUCTION
 
 
 @pytest.fixture()
@@ -36,7 +37,9 @@ def db(tmp_path):
     session.owner_id = owner.id
     # A use case is a row now, not a constant, so the shipped set has to be
     # seeded here exactly as the app seeds it at startup.
-    workflow_catalog.seed(session, workflow_repo.WORKFLOW_CATALOG)
+    workflow_catalog.seed(
+        session, workflow_repo.WORKFLOW_CATALOG, divisions=(MF, CONSTRUCTION)
+    )
     yield session
     session.close()
 

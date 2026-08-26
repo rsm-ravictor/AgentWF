@@ -22,6 +22,7 @@ Also here:
 import csv
 import io
 import json
+import mimetypes
 import re
 from datetime import datetime
 from typing import List, Optional
@@ -30,7 +31,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import workflow_catalog
-from .config import Division, division_key as _division_key
+from .config import ARCHIVE_ROOT, Division, division_key as _division_key
 from .models import Document, Folder, WorkflowRecord, WorkflowRevision, WorkflowStep
 
 # Extensions that count as a "record file" a user would want to open rather than
@@ -44,6 +45,7 @@ AAT_REQUIREMENTS_FOLDER = "AAT Company Requirements/Documents"
 STEP_KINDS = {
     "intake": "Gathers the documents the workflow needs",
     "analysis": "Reads and grades what was gathered",
+    "draft": "Writes the correspondence the outcome calls for",
     "decision": "Applies the pass/fail rule",
     "human": "Hands the outcome to a person",
     "record": "Writes the result to the record file",
@@ -120,6 +122,91 @@ WORKFLOW_CATALOG = {
             {
                 "name": "Daily activity report",
                 "match": ["dar", "activity", "report"],
+            },
+        ],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Office/Retail catalog
+#
+# The active set, and the whole of it: two insurance use cases carried over from
+# the residential work, and Clause Search, which is new here.
+#
+# The two insurance ones reuse the shape of the residential vendor and renter
+# workflows — same spine, retargeted at office and retail holders. Clause Search
+# does not: it starts from an incident, not from a document someone submitted,
+# and it ends in drafted correspondence rather than a pass or a fail.
+# ---------------------------------------------------------------------------
+
+OFFICE_CATALOG = {
+    "insurance-certificate-audit": {
+        "title": "Insurance Certificate Audit",
+        "folder": "Vendor Insurances",
+        "purpose": "Check a certificate of insurance against AAT's requirements before the holder works on site.",
+        "documents": [
+            {"name": "Certificate of insurance", "match": ["coi", "certificate", "insurance"]},
+            {
+                "name": "AAT requirements document",
+                "match": ["requirement", "aat"],
+                "folder": AAT_REQUIREMENTS_FOLDER,
+            },
+        ],
+    },
+    "coverage-matching": {
+        "title": "Insurance Coverage Matching Workflow",
+        "folder": "Vendor Insurances",
+        "purpose": "Build the required coverage matrix from the governing agreement, then grade the policy on file against it.",
+        "documents": [
+            {"name": "Governing agreement", "match": ["lease", "agreement", "contract"], "folder": "Lease Agreements"},
+            {"name": "Coverage matrix", "match": ["matrix", "checklist", "schedule"], "folder": "Checklists"},
+            {"name": "Submitted policy", "match": ["policy", "insurance", "certificate"]},
+        ],
+    },
+    # Runs from an incident rather than from a submission: the notification
+    # arrives, the lease it points at is found, the section the conduct breached
+    # is quoted out of that lease, and the email goes to a person to send.
+    "clause-search": {
+        "title": "Clause Search",
+        "folder": "Lease Agreements",
+        "purpose": "Match an incident report to the lease it concerns, find the section the conduct breached, and draft the notice quoting that section word for word.",
+        "documents": [
+            {"name": "Tenant lease", "match": ["lease", "agreement", "contract"]},
+        ],
+        # The four things a run asks for. The first three identify which lease to
+        # read; the fourth is the text the clause search is actually run against
+        # and the account of the incident the drafted email carries. Typed rather
+        # than attached, because an incident is reported by someone describing it
+        # long before a report is filed — the original document can still be
+        # attached, but waiting for one would be waiting for the wrong thing.
+        "run_inputs": [
+            {
+                "name": "company",
+                "label": "Name of company",
+                "type": "text",
+                "role": "lease_lookup",
+                "placeholder": "Northgate Design Co.",
+            },
+            {
+                "name": "property_id",
+                "label": "Property",
+                "type": "text",
+                "role": "lease_lookup",
+                "placeholder": "RTL-118",
+            },
+            {
+                "name": "unit",
+                "label": "Unit #",
+                "type": "text",
+                "role": "lease_lookup",
+                "placeholder": "Suite 210",
+            },
+            {
+                "name": "incident_summary",
+                "label": "Incident summary",
+                "type": "textarea",
+                "role": "clause_query",
+                "placeholder": "What happened, where, and when. Written the way it was reported.",
             },
         ],
     },
@@ -391,6 +478,183 @@ DEFAULT_STEPS = {
             ],
         },
     ],
+    # ---- Office/Retail ----
+    #
+    # Insurance Certificate Audit and Coverage Matching are adapted from the
+    # residential vendor and renter workflows: the same shape, retargeted at
+    # office and retail holders. Clause Search is written from its own flow —
+    # notification in, drafted notice out — and is the only definition here with
+    # a Draft step.
+    "insurance-certificate-audit": [
+        {
+            "title": "Gather the certificate",
+            "kind": "intake",
+            "summary": "Pull the certificate and the AAT requirements standard in force.",
+            "bullets": [
+                "Reads the certificate folder for the COI under review.",
+                "Reads AAT Company Requirements/Documents for the standard to grade against.",
+                "Records which file satisfied each requirement, so the check is auditable.",
+            ],
+        },
+        {
+            "title": "Redact and read",
+            "kind": "analysis",
+            "summary": "Strip identifiers, then grade the certificate against the rubric.",
+            "bullets": [
+                "Identifiers are redacted before the document is read.",
+                "Every rubric requirement comes back met, not met, or unclear, with a supporting quote.",
+                "Carrier, policy number, limits and policy period are extracted as fields.",
+            ],
+        },
+        {
+            "title": "Compare to requirements",
+            "kind": "decision",
+            "summary": "Pass only on a clean sheet; anything near a threshold goes to a human.",
+            "bullets": [
+                "A liability limit below the AAT minimum fails.",
+                "AAT named as certificate holder rather than additional insured fails.",
+                "An expired or not-yet-effective policy period fails.",
+                "Anything within 10% of a threshold routes to review rather than clearing.",
+            ],
+        },
+        {
+            "title": "Human sign-off",
+            "kind": "human",
+            "summary": "A person owns the outcome; the agent never clears a holder itself.",
+            "bullets": [
+                "Anything not clean is queued as an approval case naming the gap.",
+                "A failed certificate for a holder already on site escalates the same day.",
+                "Expired coverage escalates immediately rather than waiting for the next cycle.",
+            ],
+        },
+        {
+            "title": "File the outcome",
+            "kind": "record",
+            "summary": "Write the decision to the use case's record file.",
+            "bullets": [
+                "One row per run: property, subject, outcome, and who signed off.",
+                "The record file exports as CSV.",
+                "Cleared certificates stay filed for the next renewal check.",
+            ],
+        },
+    ],
+    "coverage-matching": [
+        {
+            "title": "Read the governing agreement",
+            "kind": "intake",
+            "summary": "Pull the agreement that sets the coverage obligation, and the matrix built from it.",
+            "bullets": [
+                "Finds the lease, contract or agreement that names the required coverage.",
+                "Finds the coverage matrix that turns those terms into a checklist.",
+                "Property ID and unit identify which tenancy or vendor this run is about.",
+            ],
+        },
+        {
+            "title": "Grade the policy against the matrix",
+            "kind": "analysis",
+            "summary": "Compare what the submitted policy actually provides against each required line.",
+            "bullets": [
+                "Identifiers are redacted before the policy is read.",
+                "Each required coverage line comes back met, not met, or unclear, with a quote.",
+                "Limits, endorsements and the policy period are extracted for comparison.",
+            ],
+        },
+        {
+            "title": "Match or flag the gap",
+            "kind": "decision",
+            "summary": "Clear only when every required line is matched by the policy on file.",
+            "bullets": [
+                "A missing required coverage line fails.",
+                "A limit below what the agreement requires fails.",
+                "A line the policy does not clearly address is treated as unmet, never as satisfied.",
+            ],
+        },
+        {
+            "title": "Hand the gaps to a person",
+            "kind": "human",
+            "summary": "Queue the mismatch for sign-off, naming each line that did not match.",
+            "bullets": [
+                "The approval case lists the required line and what the policy actually said.",
+                "A gap on an active tenancy or vendor escalates rather than waiting.",
+            ],
+        },
+        {
+            "title": "Record the match",
+            "kind": "record",
+            "summary": "Log which lines matched and which did not.",
+            "bullets": [
+                "One row per run, exported as the record file.",
+                "Later runs read those rows when deciding whether a gap is recurring.",
+            ],
+        },
+    ],
+    "clause-search": [
+        {
+            "title": "Take in the notification",
+            "kind": "intake",
+            "summary": "Read what was reported, and pull the lease it points at.",
+            "bullets": [
+                "The notification supplies the incident report and the tenant name, unit and location it concerns.",
+                "Reads Daily Activity Reports for the report, and Lease Agreements for the lease.",
+                "Property and unit scope the search, so one tenancy is in view rather than the whole folder.",
+                "Records which file was read on each side, so the finding can be checked later.",
+            ],
+        },
+        {
+            "title": "Match the lease and find the clause",
+            "kind": "analysis",
+            "summary": "Confirm the lease is the right one, then locate the section the conduct breached.",
+            "bullets": [
+                "Identifiers are redacted before either document is read.",
+                "The tenant name, unit and location on the report are matched against the lease on file — a lease that does not match is reported as unmatched rather than used.",
+                "The lease term is checked against the date of the incident, so a clause is only cited while it is in force.",
+                "The conduct is then read against the lease section by section, and the section it breaches is quoted with its number.",
+                "A section the lease does not clearly prohibit comes back unclear, never as a breach.",
+            ],
+        },
+        {
+            "title": "Draft the notice",
+            "kind": "draft",
+            "summary": "Write the email: the context supplied, the report in summary, then the clause word for word.",
+            "bullets": [
+                "Opens with the context the notification carried — tenant, unit, location and the date of the incident.",
+                "Summarises what the report said, in the report's own terms rather than reworded.",
+                "Pastes the breached section verbatim from the lease, with its number, and the cure period it states.",
+                "Anything the lease does not support is listed as unresolved instead of being written into the draft.",
+                "Nothing is sent. The draft is output, not correspondence.",
+            ],
+        },
+        {
+            "title": "Check it stands up",
+            "kind": "decision",
+            "summary": "Ready for a person only when every quote is grounded in the lease on file.",
+            "bullets": [
+                "A draft citing no section is held.",
+                "A quote that does not appear in the lease as written is held.",
+                "Conduct the lease does not actually prohibit is held rather than asserted as a breach.",
+                "An incident dated outside the lease term is held.",
+            ],
+        },
+        {
+            "title": "Management review",
+            "kind": "human",
+            "summary": "A person reads the draft and sends it. The agent never sends.",
+            "bullets": [
+                "The approval case carries the drafted email and the section it quotes.",
+                "Anything involving safety, weapons or threats escalates immediately, regardless of what the clause says.",
+            ],
+        },
+        {
+            "title": "Log the finding",
+            "kind": "record",
+            "summary": "Record the search, the section cited, and who confirmed it.",
+            "bullets": [
+                "One row per search: property, unit, the section cited, and the outcome.",
+                "Later runs read those rows when deciding whether the conduct is recurring.",
+            ],
+        },
+    ],
+
 }
 
 # Shared vocabulary for the reference page. Kept in one place so a term means the
@@ -698,6 +962,9 @@ def get_definition(db: Session, workflow_id: str, division: Division) -> dict:
         "documents": wf["documents"],
         "rubric": wf["rubric"],
         "document_kinds": wf["document_kinds"],
+        # What the run form asks for, so the page builds its boxes from the use
+        # case rather than from a fixed set that fits only some of them.
+        "run_inputs": wf["run_inputs"],
         "archived": wf["archived"],
     }
 
@@ -1132,7 +1399,8 @@ def records_csv(db: Session, workflow_id: str, division: Division) -> str:
 
 # ---------------- Documents ----------------
 
-def _folder_documents(db: Session, division: Division, folder_name: str) -> List[Document]:
+def folder_documents(db: Session, division: Division, folder_name: str) -> List[Document]:
+    """Every document in one folder, newest first."""
     return (
         db.query(Document)
         .join(Folder)
@@ -1140,6 +1408,10 @@ def _folder_documents(db: Session, division: Division, folder_name: str) -> List
         .order_by(Document.uploaded_at.desc())
         .all()
     )
+
+
+# Kept as the private name this module has always used internally.
+_folder_documents = folder_documents
 
 
 def required_documents(db: Session, workflow_id: str, division: Division) -> dict:
@@ -1188,6 +1460,37 @@ def required_documents(db: Session, workflow_id: str, division: Division) -> dic
         "present": present,
         "total": len(items),
         "missing": [i["name"] for i in items if not i["present"]],
+    }
+
+
+def archived_file(db: Session, document_id: int) -> Optional[dict]:
+    """One archived document's bytes, so a step can read what is on file.
+
+    `required_documents` answers whether a document is present. A step that has
+    to quote out of it — Clause Search reads the clause out of the lease itself —
+    needs the file, not the filename.
+
+    Returns None when the row exists but the file does not. A repository that has
+    lost a file should report that as a gap in the run, not raise out of it.
+    """
+    document = db.get(Document, document_id)
+    if document is None or document.folder is None:
+        return None
+    path = (
+        ARCHIVE_ROOT
+        / document.folder.division.value
+        / document.folder.name
+        / document.filename
+    )
+    if not path.exists():
+        return None
+    media_type, _ = mimetypes.guess_type(document.filename)
+    return {
+        "id": document.id,
+        "filename": document.filename,
+        "folder": document.folder.name,
+        "media_type": media_type or "application/octet-stream",
+        "content": path.read_bytes(),
     }
 
 
