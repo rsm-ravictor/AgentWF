@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lease Review & Incident Notice</title>
+<style>
+  :root{
+    --navy: #0c1f38;
+    --navy-deep: #081527;
+    --navy-mid: #16304f;
+    --white: #ffffff;
+    --cream: #f7f5f0;
+    --gold: #b8923f;
+    --line: #d9dce2;
+    --text-soft: #5b6472;
+    --highlight: rgba(184,146,63,0.28);
+    --highlight-active: rgba(184,146,63,0.55);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: "Georgia", "Iowan Old Style", serif;
+    background: var(--cream);
+    color: var(--navy-deep);
+  }
+  .sans{ font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+
+  header.topbar{
+    background: var(--navy);
+    color: var(--white);
+    padding: 18px 32px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  header.topbar .brand{
+    font-size:15px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-weight:600;
+  }
+  header.topbar .brand span{ color: var(--gold); }
+  header.topbar .sub{
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size:12px;
+    color: #b9c3d1;
+  }
+
+  .wrap{
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 24px 80px;
+  }
+
+  /* Search panel */
+  .search-card{
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 26px 28px;
+  }
+  .search-card h1{
+    font-size: 20px;
+    margin: 0 0 4px;
+    font-weight: 600;
+  }
+  .search-card .desc{
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    color: var(--text-soft);
+    margin: 0 0 22px;
+  }
+  .field-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px 20px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field.full{ grid-column: 1 / -1; }
+  .field label{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-soft);
+    font-weight:600;
+  }
+  .field input, .field textarea, .field select{
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 9px 11px;
+    font-size: 13.5px;
+    font-family: inherit;
+    color: var(--navy-deep);
+    background: var(--white);
+  }
+  .field textarea{ resize: vertical; min-height: 56px; }
+  .field input:focus, .field textarea:focus, .field select:focus{
+    outline: none;
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(184,146,63,0.15);
+  }
+
+  .mode-toggle{
+    display:flex;
+    gap:0;
+    margin-top: 18px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    width: fit-content;
+    overflow:hidden;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .mode-toggle button{
+    border:none;
+    background: var(--white);
+    padding: 8px 16px;
+    font-size: 12.5px;
+    font-weight:600;
+    color: var(--text-soft);
+    cursor:pointer;
+  }
+  .mode-toggle button.active{
+    background: var(--navy);
+    color: var(--white);
+  }
+
+  .upload-zone{
+    margin-top: 14px;
+    border: 1.5px dashed var(--line);
+    border-radius: 3px;
+    padding: 20px;
+    text-align:center;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12.5px;
+    color: var(--text-soft);
+    display:none;
+  }
+  .upload-zone.show{ display:block; }
+
+  .cta-row{
+    margin-top: 22px;
+    display:flex;
+    justify-content:flex-end;
+  }
+  .btn-primary{
+    background: var(--navy);
+    color: var(--white);
+    border:none;
+    padding: 11px 26px;
+    font-size: 13px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-weight:600;
+    letter-spacing:0.03em;
+    border-radius: 2px;
+    cursor:pointer;
+    transition: background 0.15s;
+  }
+  .btn-primary:hover{ background: var(--navy-mid); }
+  .btn-primary:disabled{ background:#9aa3b0; cursor:default; }
+
+  /* Result section */
+  .results{
+    display:none;
+    margin-top: 32px;
+  }
+  .results.show{ display:block; }
+
+  .status-strip{
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    color: var(--text-soft);
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight:600;
+  }
+  .status-dot{
+    width:7px; height:7px; border-radius:50%;
+    background: var(--gold);
+    animation: pulse 1.2s infinite;
+  }
+  .status-strip.done .status-dot{ animation:none; background:#3d7a4f; }
+  @keyframes pulse{
+    0%,100%{ opacity:1; } 50%{ opacity:0.3; }
+  }
+
+  .cols{
+    display:grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 20px;
+  }
+
+  .panel{
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow:hidden;
+  }
+  .panel-head{
+    background: var(--navy);
+    color: var(--white);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    font-weight:600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 10px 16px;
+  }
+
+  .lease-panel-body{
+    display:flex;
+  }
+  .thumb-rail{
+    width: 96px;
+    flex-shrink:0;
+    background: #dedcd7;
+    border-right: 1px solid #c9c7c1;
+    padding: 14px 10px;
+    max-height: 560px;
+    overflow-y:auto;
+    display:flex;
+    flex-direction:column;
+    gap: 12px;
+    align-items:center;
+  }
+  .thumb{
+    width: 64px;
+    height: 84px;
+    background: var(--white);
+    border: 2px solid transparent;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+    position:relative;
+    cursor:pointer;
+    flex-shrink:0;
+  }
+  .thumb.active{ border-color: var(--gold); }
+  .thumb .thumb-lines{
+    position:absolute;
+    top:10px; left:8px; right:8px;
+  }
+  .thumb .thumb-lines div{
+    height:2px;
+    background:#d5d3cd;
+    margin-bottom:4px;
+  }
+  .thumb .thumb-num{
+    position:absolute;
+    bottom: 4px;
+    right: 6px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 9px;
+    color: #9a9a95;
+  }
+  .thumb.found::after{
+    content: "";
+    position:absolute;
+    top:4px; left:4px;
+    width:6px; height:6px;
+    border-radius:50%;
+    background: var(--gold);
+  }
+  .lease-viewport{
+    flex: 1;
+    background: #e7e6e2;
+    padding: 24px;
+    max-height: 560px;
+    overflow-y: auto;
+  }
+  .lease-page{
+    background: var(--white);
+    max-width: 620px;
+    margin: 0 auto 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+    padding: 48px 56px;
+    font-family: "Times New Roman", Times, serif;
+    color: #1c1c1c;
+    position: relative;
+  }
+  .lease-page::before{
+    content: attr(data-page);
+    position: absolute;
+    bottom: 16px;
+    right: 24px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10px;
+    color: #9a9a95;
+    letter-spacing: 0.04em;
+  }
+  .lease-letterhead{
+    text-align:center;
+    margin-bottom: 26px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #ccc;
+  }
+  .lease-letterhead .doc-title{
+    font-size: 15px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight:bold;
+  }
+  .lease-letterhead .doc-sub{
+    font-size: 11px;
+    color: #666;
+    margin-top: 4px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .lease-page p{
+    margin: 0 0 15px;
+    font-size: 13.5px;
+    line-height: 1.85;
+    text-align: justify;
+  }
+  .lease-page p.sec-head{
+    font-weight: bold;
+    text-decoration: underline;
+    margin-bottom: 8px;
+  }
+  .lease-page .clause{
+    transition: background 0.5s ease, box-shadow 0.5s ease;
+    border-radius: 1px;
+    padding: 1px 2px;
+  }
+  .lease-page .clause.sweeping{
+    background: var(--highlight-active);
+    box-shadow: 0 0 0 1px var(--gold);
+  }
+  .lease-page .clause.done{
+    background: var(--highlight);
+  }
+  .scan-line{
+    position: sticky;
+    top: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    opacity: 0;
+    z-index: 5;
+  }
+  .scan-line.active{ opacity: 1; }
+
+  .extract-body{
+    padding: 18px 20px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .extract-row{
+    display:flex;
+    justify-content:space-between;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+    opacity:0;
+    transform: translateY(4px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  .extract-row.show{ opacity:1; transform: translateY(0); }
+  .extract-row:last-child{ border-bottom:none; }
+  .extract-row .k{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-soft);
+    font-weight:600;
+  }
+  .extract-row .v{
+    font-size: 13px;
+    color: var(--navy-deep);
+    text-align:right;
+  }
+  .extract-empty{
+    font-size: 12.5px;
+    color: var(--text-soft);
+    text-align:center;
+    padding: 30px 10px;
+  }
+
+  /* Email panel */
+  .email-panel{
+    margin-top: 20px;
+    max-height: 0;
+    overflow:hidden;
+    transition: max-height 0.6s ease;
+  }
+  .email-panel.open{ max-height: 900px; }
+  .email-card{
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow:hidden;
+  }
+  .email-fields{
+    padding: 20px 24px 6px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .email-fields .row{
+    display:flex;
+    gap:14px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--line);
+    font-size:13px;
+    align-items:baseline;
+  }
+  .email-fields .row .lab{
+    width: 70px;
+    flex-shrink:0;
+    color: var(--text-soft);
+    font-weight:600;
+    text-transform:uppercase;
+    font-size:11px;
+    letter-spacing:0.05em;
+  }
+  .email-fields .row input{
+    border:none;
+    font-size:13px;
+    font-family: inherit;
+    width:100%;
+    color: var(--navy-deep);
+    background:transparent;
+  }
+  .email-fields .row input:focus{ outline:none; }
+  .email-body-area{
+    padding: 18px 24px 24px;
+    font-family: "Georgia", serif;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .email-body-area textarea{
+    width:100%;
+    min-height: 220px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 14px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--navy-deep);
+    resize: vertical;
+  }
+  .email-actions{
+    display:flex;
+    justify-content:flex-end;
+    gap: 10px;
+    padding: 0 24px 22px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .btn-secondary{
+    background: var(--white);
+    color: var(--navy);
+    border: 1px solid var(--navy);
+    padding: 9px 18px;
+    font-size: 12.5px;
+    font-weight:600;
+    border-radius:2px;
+    cursor:pointer;
+  }
+  .btn-secondary:hover{ background: var(--cream); }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background: var(--line); border-radius:4px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">AAT <span>Document Intelligence</span></div>
+  <div class="sub">Incident &amp; Notice Automation — Mockup</div>
+</header>
+
+<div class="wrap">
+
+  <div class="search-card">
+    <h1>Locate Lease &amp; Draft Incident Notice</h1>
+    <p class="desc">Enter the incident details below. The system will locate the governing lease automatically, or you can upload it manually.</p>
+
+    <div class="field-grid">
+      <div class="field">
+        <label>Company Name</label>
+        <input id="f-company" type="text" value="Coastal Retail Group LLC" />
+      </div>
+      <div class="field">
+        <label>Property</label>
+        <select id="f-property">
+          <option>La Jolla Commons — San Diego, CA</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Unit</label>
+        <input id="f-unit" type="text" value="Suite 214" />
+      </div>
+      <div class="field">
+        <label>Incident Summary</label>
+        <input id="f-incident-short" type="text" value="Water intrusion reported near loading dock" />
+      </div>
+      <div class="field full">
+        <label>Incident Details</label>
+        <textarea id="f-incident">Tenant reported water intrusion near the rear loading dock entrance following overnight storm activity. Security noted minor pooling, no structural damage observed. Requires tenant notice per lease maintenance and access provisions.</textarea>
+      </div>
+    </div>
+
+    <div class="mode-toggle">
+      <button id="mode-auto" class="active">Auto-locate lease</button>
+      <button id="mode-manual">Upload manually</button>
+    </div>
+
+    <div class="upload-zone" id="upload-zone">
+      Drag lease PDF here, or click to browse
+    </div>
+
+    <div class="cta-row">
+      <button class="btn-primary" id="btn-review">Review Lease</button>
+    </div>
+  </div>
+
+  <div class="results" id="results">
+    <div class="status-strip" id="status-strip">
+      <span class="status-dot"></span>
+      <span id="status-text">Scanning lease…</span>
+    </div>
+
+    <div class="cols">
+      <div class="panel">
+        <div class="panel-head">Lease Document — Coastal Retail Group LLC, Suite 214</div>
+        <div class="lease-panel-body">
+          <div class="thumb-rail" id="thumb-rail">
+            <div class="thumb active" data-page="1"><div class="thumb-lines"><div></div><div></div><div style="width:60%"></div></div><span class="thumb-num">1</span></div>
+            <div class="thumb" data-page="2"><div class="thumb-lines"><div></div><div></div><div style="width:70%"></div></div><span class="thumb-num">2</span></div>
+            <div class="thumb" data-page="3"><div class="thumb-lines"><div></div><div></div><div style="width:50%"></div></div><span class="thumb-num">3</span></div>
+            <div class="thumb" data-page="4"><div class="thumb-lines"><div></div><div></div><div style="width:65%"></div></div><span class="thumb-num">4</span></div>
+          </div>
+          <div class="lease-viewport" id="lease-body">
+          <div class="scan-line" id="scan-line"></div>
+          <div class="lease-page" data-page="Page 1 of 4">
+            <div class="lease-letterhead">
+              <div class="doc-title">Standard Commercial Lease Agreement</div>
+              <div class="doc-sub">La Jolla Commons Property Owner, LLC — Executed Instrument</div>
+            </div>
+            <p>This Lease Agreement ("Lease") is entered into as of the Effective Date by and between La Jolla Commons Property Owner, LLC, a Delaware limited liability company ("Landlord"), and <span class="clause" data-key="tenant">Coastal Retail Group LLC, a California limited liability company ("Tenant")</span>, for the premises located at <span class="clause" data-key="premises">La Jolla Commons, Suite 214, San Diego, CA 92037 ("Premises")</span>, as more particularly described in Exhibit A attached hereto.</p>
+            <p>WHEREAS, Landlord is the owner of the building commonly known as La Jolla Commons; and WHEREAS, Tenant desires to lease the Premises for the Permitted Use set forth in Section 3 below, the parties agree to the terms set forth herein.</p>
+            <p class="sec-head">Section 9 — Maintenance &amp; Repairs</p>
+            <p>Landlord shall be responsible for maintenance and repair of common areas, structural elements, roof, and loading dock facilities serving the Premises, except where such condition arises from Tenant's negligence or misuse. <span class="clause" data-key="notice">Tenant shall provide written notice of any condition requiring repair, including water intrusion or damage, within forty-eight (48) hours of discovery, delivered to Landlord's designated notice address set forth in Section 14</span>. Failure to provide timely notice may limit Tenant's remedies under this Section.</p>
+            <p class="sec-head">Section 14 — Notices</p>
+            <p>All notices, demands, or other communications under this Lease shall be in writing and delivered to Tenant at: <span class="clause" data-key="contact">Attn: Facilities Manager, Coastal Retail Group LLC, notices@coastalretailgroup.com</span>. Notices delivered by email shall be deemed received on the date sent, provided a read receipt or confirmation is obtained; notices delivered by mail shall be deemed received three (3) business days after deposit.</p>
+            <p class="sec-head">Section 22 — Insurance</p>
+            <p><span class="clause" data-key="insurance">Tenant shall maintain commercial general liability insurance in an amount not less than $2,000,000 per occurrence, with Landlord named as additional insured, evidenced by a current Certificate of Insurance on file with Landlord at all times during the Term</span>. Tenant shall furnish a renewal certificate no later than thirty (30) days prior to expiration of any such policy.</p>
+          </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">Extracted Details</div>
+        <div class="extract-body" id="extract-body">
+          <div class="extract-empty" id="extract-empty">Waiting for extraction…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="email-panel" id="email-panel">
+      <div class="email-card">
+        <div class="panel-head">Generated Incident Notice</div>
+        <div class="email-fields">
+          <div class="row"><span class="lab">To</span><input id="e-to" value="notices@coastalretailgroup.com"/></div>
+          <div class="row"><span class="lab">Cc</span><input id="e-cc" value="propertymanagement@aat.com"/></div>
+          <div class="row"><span class="lab">Subject</span><input id="e-subject" value="Notice of Incident — La Jolla Commons, Suite 214"/></div>
+        </div>
+        <div class="email-body-area">
+          <textarea id="e-body">Attn: Facilities Manager, Coastal Retail Group LLC
+
+RE: Notice of Incident — Suite 214, La Jolla Commons
+
+This letter serves as notice, per Section 9 of the Lease, of an incident identified at the above Premises.
+
+Incident Summary: Water intrusion reported near loading dock. Tenant reported water intrusion near the rear loading dock entrance following overnight storm activity. Security noted minor pooling, no structural damage observed.
+
+Per Section 9 (Maintenance & Repairs), Tenant is required to provide written notice of any condition requiring repair within 48 hours of discovery. Please confirm receipt of this notice and advise if further inspection or remediation is requested.
+
+We also note your Certificate of Insurance on file per Section 22 and will refer to it should any related claim arise.
+
+Regards,
+Property Management
+American Assets Trust</textarea>
+        </div>
+        <div class="email-actions">
+          <button class="btn-secondary">Copy to Clipboard</button>
+          <button class="btn-secondary">Save Draft</button>
+          <button class="btn-primary">Send</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+  const modeAuto = document.getElementById('mode-auto');
+  const modeManual = document.getElementById('mode-manual');
+  const uploadZone = document.getElementById('upload-zone');
+
+  modeAuto.addEventListener('click', () => {
+    modeAuto.classList.add('active');
+    modeManual.classList.remove('active');
+    uploadZone.classList.remove('show');
+  });
+  modeManual.addEventListener('click', () => {
+    modeManual.classList.add('active');
+    modeAuto.classList.remove('active');
+    uploadZone.classList.add('show');
+  });
+
+  document.querySelectorAll('.thumb').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.thumb').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+  });
+
+  const btnReview = document.getElementById('btn-review');
+  const results = document.getElementById('results');
+  const statusStrip = document.getElementById('status-strip');
+  const statusText = document.getElementById('status-text');
+  const extractBody = document.getElementById('extract-body');
+  const extractEmpty = document.getElementById('extract-empty');
+  const emailPanel = document.getElementById('email-panel');
+
+  const extractionMap = [
+    { key: 'tenant', label: 'Tenant Legal Name', value: 'Coastal Retail Group LLC' },
+    { key: 'premises', label: 'Premises', value: 'Suite 214, La Jolla Commons' },
+    { key: 'notice', label: 'Notice Requirement', value: 'Written notice within 48 hrs (Sec. 9)' },
+    { key: 'contact', label: 'Notice Contact', value: 'notices@coastalretailgroup.com' },
+    { key: 'insurance', label: 'Insurance on File', value: 'COI current, Landlord additional insured' },
+  ];
+
+  btnReview.addEventListener('click', () => {
+    // reset
+    document.getElementById('scan-line').classList.add('active');
+    document.querySelectorAll('.clause').forEach(el => el.classList.remove('sweeping','done'));
+    extractBody.innerHTML = '';
+    extractBody.appendChild(extractEmpty);
+    emailPanel.classList.remove('open');
+    statusStrip.classList.remove('done');
+    statusText.textContent = 'Scanning lease…';
+    btnReview.disabled = true;
+    btnReview.textContent = 'Reviewing…';
+
+    results.classList.add('show');
+    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    const clauses = Array.from(document.querySelectorAll('.clause'));
+    let i = 0;
+
+    setTimeout(() => { statusText.textContent = 'Extracting clauses…'; }, 500);
+
+    function sweepNext() {
+      if (i > 0) clauses[i-1].classList.remove('sweeping');
+      if (i >= clauses.length) {
+        statusText.textContent = 'Complete';
+        statusStrip.classList.add('done');
+        document.getElementById('scan-line').classList.remove('active');
+        document.querySelector('.thumb[data-page="1"]').classList.add('found');
+        btnReview.disabled = false;
+        btnReview.textContent = 'Review Lease';
+        setTimeout(() => emailPanel.classList.add('open'), 300);
+        return;
+      }
+      const el = clauses[i];
+      el.classList.add('sweeping');
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      setTimeout(() => {
+        el.classList.remove('sweeping');
+        el.classList.add('done');
+
+        const match = extractionMap.find(m => m.key === el.dataset.key);
+        if (match) {
+          if (extractEmpty.parentNode) extractEmpty.remove();
+          const row = document.createElement('div');
+          row.className = 'extract-row';
+          row.innerHTML = `<span class="k">${match.label}</span><span class="v">${match.value}</span>`;
+          extractBody.appendChild(row);
+          requestAnimationFrame(() => row.classList.add('show'));
+        }
+
+        i++;
+        setTimeout(sweepNext, 350);
+      }, 900);
+    }
+    setTimeout(sweepNext, 700);
+  });
+</script>
+
+</body>
+</html>

@@ -28,6 +28,7 @@
   const KINDS = {
     intake: 'Intake',
     analysis: 'Analysis',
+    draft: 'Draft',
     decision: 'Decision',
     human: 'Human',
     record: 'Record',
@@ -35,17 +36,20 @@
   };
 
   const state = {
-    division: 'mf',
+    division: 'retail',
     profile: null,
     summary: null,
     reference: null,
     workflow: null, // { id, detail, steps, editing, draft }
+    history: null, // this use case's revisions, for the Reference tab
     running: false,
     runStatuses: {},
     attachment: null,
     openFolder: null,
     view: 'dashboard',
-    changeLogFilter: '', // '' = every use case in the division
+    // Which half of the open use case is showing: 'reference' is what it is,
+    // 'execution' is what happens when it runs.
+    useCaseTab: 'reference',
     permissions: null, // the role × permission matrix, as loaded
     settingsSection: 'profiles', // which Settings section is open
     settingsDivision: null, // which division's levels are being configured
@@ -337,6 +341,30 @@
   qs('#brand-home').addEventListener('click', () => switchView('dashboard'));
   qs('#uc-back').addEventListener('click', () => switchView('dashboard'));
 
+  /**
+   * Switch between a use case's Reference and Execution halves.
+   *
+   * Deliberately separate from switchView: these are panes inside one view, and
+   * switchView toggles every `.view` element by id. Nothing here re-renders —
+   * both panes stay in the DOM so a run keeps streaming into the log while the
+   * Reference tab is showing, and the diagram's node rings stay live in both.
+   */
+  function switchUseCaseTab(name) {
+    state.useCaseTab = name;
+    qsa('.uc-pane').forEach((pane) =>
+      pane.classList.toggle('hidden', pane.id !== 'uc-pane-' + name)
+    );
+    qsa('.uc-tab').forEach((tab) => {
+      const active = tab.dataset.ucTab === name;
+      tab.classList.toggle('active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+  }
+
+  qsa('.uc-tab').forEach((tab) =>
+    tab.addEventListener('click', () => switchUseCaseTab(tab.dataset.ucTab))
+  );
+
   // ---------------- 2. Division dashboard ----------------
 
   async function refreshDashboard() {
@@ -626,9 +654,12 @@
       state.attachment = null;
       qs('#run-file').value = '';
       qs('#run-filename').textContent = 'Attach a PDF, image, or text file';
-      qs('#run-log').innerHTML = '';
-      qs('#run-outcome').classList.add('hidden');
-      qs('#run-status-text').textContent = 'Not started.';
+      qs('#run-trail').innerHTML = '';
+      qs('#run-output').classList.add('hidden');
+      qs('#run-source').classList.add('hidden');
+      qs('#run-extract').classList.add('hidden');
+      qs('#run-step-count').textContent = '';
+      setStatus('', 'Not started.');
       qs('#run-progress-fill').style.width = '0%';
       setRunPill('idle', 'Idle');
     }
@@ -648,7 +679,66 @@
       editing: false,
       draft: null,
     };
+    // Opening a use case starts on what it is, not on running it. A reload that
+    // keeps the run — the one renderOutcome does — stays on Execution instead,
+    // so a finished run is not yanked out from under whoever started it.
+    if (!options.keepRun) switchUseCaseTab('reference');
     renderUseCase();
+    loadUseCaseHistory(workflowId);
+  }
+
+  /**
+   * The standard this use case grades a document against.
+   *
+   * Reference material rather than run output: it is what the analysis step
+   * will check, stated before anything has been run. Edited through Use case
+   * settings, which is why there is nothing to edit here.
+   */
+  function renderRubric() {
+    const rubric = state.workflow.detail.rubric || [];
+    qs('#uc-rubric-count').textContent = rubric.length
+      ? `${rubric.length} requirement${rubric.length === 1 ? '' : 's'}`
+      : '';
+    qs('#uc-rubric').innerHTML = rubric.length
+      ? rubric.map((line) => `<li>${esc(line)}</li>`).join('')
+      : `<li class="empty">No requirements set yet. Add them in Use case settings —
+          without them the analysis step has nothing to grade against.</li>`;
+  }
+
+  /**
+   * This use case's revision history, for the Reference tab.
+   *
+   * Fetched separately from the definition because it is only ever read, never
+   * needed to render the diagram, and a failure here must not stop the use case
+   * opening — so it renders its own error rather than throwing.
+   */
+  async function loadUseCaseHistory(workflowId) {
+    const host = qs('#uc-history');
+    host.innerHTML = '<div class="loading">Loading history…</div>';
+    try {
+      const data = await api(
+        withDivision('/workflows/' + encodeURIComponent(workflowId) + '/history')
+      );
+      // A slower history request for a use case the user has since navigated
+      // away from must not overwrite the one now open.
+      if (!state.workflow || state.workflow.id !== workflowId) return;
+      state.history = data;
+      renderUseCaseHistory();
+    } catch (err) {
+      host.innerHTML = `<p class="empty">Could not load the history: ${esc(err.message)}</p>`;
+    }
+  }
+
+  function renderUseCaseHistory() {
+    const revisions = (state.history && state.history.revisions) || [];
+    const canRestore = can('edit_workflow');
+    qs('#uc-history-count').textContent = revisions.length
+      ? `${revisions.length} version${revisions.length === 1 ? '' : 's'}`
+      : '';
+    qs('#uc-history').innerHTML = revisions.length
+      ? revisions.map((entry) => changeLogRowHtml(entry, canRestore)).join('')
+      : '<p class="empty">No versions recorded yet.</p>';
+    bindRestoreButtons();
   }
 
   function renderUseCase() {
@@ -680,7 +770,9 @@
 
     renderDiagram();
     renderNarrative();
+    renderRubric();
     renderUseCaseState();
+    renderRunFields();
     renderRunHint();
   }
 
@@ -1133,6 +1225,12 @@
     qs('#uc-legend').innerHTML = legendHtml(steps);
     qs('#uc-diagram').classList.toggle('is-draft', isDraft);
     qs('#diagram-draft').classList.toggle('hidden', !isDraft);
+
+    // The Execution page draws the *saved* definition, never an unsaved draft:
+    // it is the picture of what a run would actually execute, and a run cannot
+    // execute an edit that has not been saved. markStep paints every copy of a
+    // node on the page, so this one goes live without a second status path.
+    qs('#run-diagram').innerHTML = diagramHtml(wf.steps, false);
     if (!qs('#diagram-overlay').classList.contains('hidden')) {
       qs('#overlay-diagram').innerHTML = diagramHtml(steps, isDraft);
       qs('#overlay-legend').innerHTML = legendHtml(steps);
@@ -1140,12 +1238,13 @@
     }
   }
 
-  // The version chip is the route from "this workflow changed" to the log that
-  // says how, filtered to the use case in hand.
+  // The version chip is the route from "this workflow changed" to the history
+  // that says how — now on this use case's own Reference tab rather than a
+  // division-wide log that had to be filtered back down to one use case.
   qs('#uc-version').addEventListener('click', () => {
     if (!state.workflow) return;
-    state.changeLogFilter = state.workflow.id;
-    switchView('reference');
+    switchUseCaseTab('reference');
+    qs('#uc-history').scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 
   qs('#diagram-expand').addEventListener('click', () => {
@@ -1310,6 +1409,9 @@
   function renderEditor() {
     renderNarrative();
     renderDiagram();
+    // The Execution tab's Start button is gated on there being no unsaved
+    // edits, so it has to hear about entering and leaving edit mode.
+    renderRunHint();
   }
 
   qs('#narr-edit').addEventListener('click', () => {
@@ -1457,6 +1559,422 @@
 
   // ---------------- Execution ----------------
 
+  // ---- The run form: whatever this use case asks for ----
+  //
+  // A use case declares its own questions. Clause Search needs a company, a
+  // property, a unit and a typed account of what happened; an insurance audit
+  // needs a property and a unit. Rendering from the declaration is what keeps
+  // one shell fitting both without branching on which use case is open.
+
+  const ROLE_HINTS = {
+    lease_lookup: 'finds the agreement',
+    clause_query: 'searched for in the agreement',
+  };
+
+  function runInputSpecs() {
+    const definition = state.workflow && state.workflow.detail && state.workflow.detail.definition;
+    return (definition && definition.run_inputs) || [];
+  }
+
+  function renderRunFields() {
+    const specs = runInputSpecs();
+
+    // The document-intelligence surface is for reading an instrument, so it is
+    // applied to a use case that searches one and to no other. Nothing here
+    // names Clause Search: a second use case that declares a clause query gets
+    // the same view, and the insurance ones keep the plain one.
+    const docIntel = specs.some((s) => s.role === 'clause_query');
+    qs('#uc-pane-execution').classList.toggle('doc-intel', docIntel);
+    qs('#run-card-title').textContent = docIntel
+      ? 'Locate the agreement and draft the notice'
+      : 'Run this use case';
+    qs('#run-card-desc').textContent = docIntel
+      ? 'Enter the incident details. The agreement is located from the first three, and read against the last.'
+      : '';
+    qs('#run-card-desc').classList.toggle('hidden', !docIntel);
+    qs('#start-label').textContent = docIntel ? 'Review lease' : 'Start process';
+    qs('#run-mode').classList.toggle('hidden', !docIntel);
+    // Without the toggle there is no auto mode to hide behind, so the upload
+    // box is simply always available, as it was before.
+    qs('#upload-zone').classList.toggle('show', !docIntel || state.uploadMode === 'manual');
+    // A run reloads the use case when it finishes, which re-renders this form.
+    // Without carrying the answers over, finishing a run wiped everything the
+    // person had typed — including the account they would want to correct and
+    // run again.
+    const kept = runInputValues();
+
+    qs('#run-fields').innerHTML = specs
+      .map((spec) => {
+        const id = 'runin-' + spec.name;
+        const hint = ROLE_HINTS[spec.role];
+        const wide = spec.type === 'textarea';
+        const was = esc(kept[spec.name] || '');
+        const box = wide
+          ? `<textarea id="${id}" rows="5" data-input="${esc(spec.name)}"
+               placeholder="${esc(spec.placeholder || '')}">${was}</textarea>`
+          : `<input id="${id}" data-input="${esc(spec.name)}" value="${was}"
+               placeholder="${esc(spec.placeholder || '')}" />`;
+        return `
+          <div class="field ${wide ? 'field-wide' : ''}">
+            <label for="${id}">
+              ${esc(spec.label)}
+              ${hint ? `<span class="field-role">${esc(hint)}</span>` : ''}
+            </label>
+            ${box}
+          </div>`;
+      })
+      .join('');
+  }
+
+  function runInputValues() {
+    const values = {};
+    qsa('#run-fields [data-input]').forEach((el) => {
+      values[el.dataset.input] = el.value.trim();
+    });
+    return values;
+  }
+
+  // ---- The agreement, with the matched section marked ----
+
+  function renderLease(agreement) {
+    const panel = qs('#run-source');
+    if (!agreement || !agreement.text) {
+      panel.classList.add('hidden');
+      return;
+    }
+    qs('#lease-file').textContent = agreement.filename || '';
+    qs('#lease-why').textContent = agreement.reason || '';
+
+    const spans = renderLeasePaper(agreement);
+    fillThumbs();
+
+    qs('#lease-jump').innerHTML = spans.length
+      ? spans
+          .map(
+            (s, i) =>
+              `<button type="button" class="btn btn-secondary btn-sm lease-jump-btn" data-hit="${i}">` +
+              esc(s.section || `Match ${i + 1}`) +
+              '</button>'
+          )
+          .join('') +
+        (agreement.unlocatable && agreement.unlocatable.length
+          ? `<span class="lease-missed">${agreement.unlocatable.length} quoted passage(s) could not be located in this text, so they are not marked</span>`
+          : '')
+      : '<span class="lease-missed">No section of this agreement matched what was described.</span>';
+
+    qsa('#lease-jump .lease-jump-btn').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const hit = qs(`.lease-hit[data-hit="${btn.dataset.hit}"]`);
+        if (hit) hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      })
+    );
+
+    panel.classList.remove('hidden');
+    sweepMatches(spans);
+  }
+
+  // =========================================================================
+  // Document Intelligence — the Clause Search execution view
+  // =========================================================================
+  // The lease is rendered as paper: real pages where the document has them,
+  // display pages where it does not. Every mark on it comes from a span the
+  // backend located by matching the model's quotation against the source text,
+  // so a highlight is only ever drawn where the passage genuinely sits.
+
+  // Roughly a page of a typed agreement. Used only when the source format had
+  // no pages of its own — a .txt lease has no page 3 to be faithful to.
+  const DISPLAY_PAGE_CHARS = 2600;
+
+  function isDocIntel() {
+    return runInputSpecs().some((s) => s.role === 'clause_query');
+  }
+
+  // ---- Pagination ----
+
+  function paginate(text, pageOffsets) {
+    // A document that knows where its pages break gets to keep them.
+    if (pageOffsets && pageOffsets.length > 1) {
+      return pageOffsets.map((start, i) => ({
+        start,
+        end: i + 1 < pageOffsets.length ? pageOffsets[i + 1] : text.length,
+        real: true,
+      }));
+    }
+    if (text.length <= DISPLAY_PAGE_CHARS) return [{ start: 0, end: text.length, real: false }];
+
+    const pages = [];
+    let at = 0;
+    while (at < text.length) {
+      let end = Math.min(at + DISPLAY_PAGE_CHARS, text.length);
+      if (end < text.length) {
+        // Break between paragraphs where possible: splitting a clause across
+        // two pages would put half a quotation on each.
+        const para = text.lastIndexOf('\n\n', end);
+        if (para > at + DISPLAY_PAGE_CHARS * 0.5) end = para + 2;
+      }
+      pages.push({ start: at, end, real: false });
+      at = end;
+    }
+    return pages;
+  }
+
+  // ---- Rendering one page, with any spans that fall inside it ----
+
+  const SECTION_LINE = /^\s*(section|article|clause)\b[^\n]{0,80}$/i;
+
+  function pageHtml(text, page, spans) {
+    let out = '';
+    let at = page.start;
+    spans.forEach((span) => {
+      if (span.end <= page.start || span.start >= page.end) return;
+      const from = Math.max(span.start, page.start);
+      const to = Math.min(span.end, page.end);
+      out += markSections(text.slice(at, from));
+      out +=
+        `<span class="lease-hit" data-hit="${span.index}">` +
+        markSections(text.slice(from, to)) +
+        '</span>';
+      at = to;
+    });
+    return out + markSections(text.slice(at, page.end));
+  }
+
+  // A plain-text lease carries its structure in its line breaks. Lines that
+  // open with Section/Article/Clause are set as headings, which is a reading
+  // aid rather than a claim about the document.
+  function markSections(chunk) {
+    return chunk
+      .split('\n')
+      .map((line) =>
+        SECTION_LINE.test(line) && line.trim().length > 6
+          ? `<span class="lease-sec">${esc(line)}</span>`
+          : esc(line)
+      )
+      .join('\n');
+  }
+
+  function renderLeasePaper(agreement) {
+    const text = agreement.text || '';
+    const spans = (agreement.spans || []).map((s, index) => ({ ...s, index }));
+    const pages = paginate(text, agreement.page_offsets);
+
+    qs('#lease-doc').innerHTML = pages
+      .map(
+        (page, i) =>
+          `<div class="lease-page" data-page="Page ${i + 1} of ${pages.length}">` +
+          pageHtml(text, page, spans) +
+          '</div>'
+      )
+      .join('');
+
+    // The rail: one thumbnail per page, dotted where a match landed.
+    const hitPages = new Set();
+    spans.forEach((span) =>
+      pages.forEach((page, i) => {
+        if (span.start < page.end && span.end > page.start) hitPages.add(i);
+      })
+    );
+    qs('#thumb-rail').innerHTML = pages
+      .map(
+        (page, i) =>
+          `<button type="button" class="thumb ${i === 0 ? 'active' : ''} ${
+            hitPages.has(i) ? 'found' : ''
+          }" data-page="${i}" aria-label="Page ${i + 1}${hitPages.has(i) ? ', has a match' : ''}">
+            <span class="thumb-lines"><span></span></span>
+            <span class="thumb-num">${i + 1}</span>
+          </button>`
+      )
+      .join('');
+    qsa('#thumb-rail .thumb').forEach((thumb) =>
+      thumb.addEventListener('click', () => {
+        qsa('#thumb-rail .thumb').forEach((t) => t.classList.remove('active'));
+        thumb.classList.add('active');
+        const page = qsa('#lease-doc .lease-page')[Number(thumb.dataset.page)];
+        if (page) page.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      })
+    );
+
+    return spans;
+  }
+
+  // Thumbnail interiors: a few ruled lines, so a page reads as a page.
+  function fillThumbs() {
+    qsa('#thumb-rail .thumb-lines').forEach((box) => {
+      box.innerHTML = ['100%', '100%', '62%'].map((w) => `<div style="width:${w}"></div>`).join('');
+    });
+  }
+
+  // ---- The sweep: walk the matches once, as they were found ----
+
+  function sweepMatches(spans) {
+    if (!spans.length) return;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) {
+      const first = qs('.lease-hit[data-hit="0"]');
+      if (first) first.scrollIntoView({ block: 'center' });
+      return;
+    }
+    let i = 0;
+    (function next() {
+      if (i >= spans.length) return;
+      const marks = qsa(`.lease-hit[data-hit="${i}"]`);
+      marks.forEach((m) => m.classList.add('sweeping'));
+      if (marks[0]) marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => {
+        marks.forEach((m) => m.classList.remove('sweeping'));
+        i += 1;
+        setTimeout(next, 300);
+      }, 900);
+    })();
+  }
+
+  // ---- Extracted details: what the reading actually established ----
+
+  function renderExtract(outcome) {
+    const panel = qs('#run-extract');
+    const search = outcome.clause_search;
+    const agreement = outcome.agreement;
+    if (!search && !agreement) {
+      panel.classList.add('hidden');
+      return;
+    }
+
+    const rows = [];
+    if (agreement) rows.push(['Agreement read', agreement.filename]);
+    if (search) {
+      if (search.party) rows.push(['Party', search.party]);
+      if (search.premises) rows.push(['Premises', search.premises]);
+      if (search.term) rows.push(['Term', search.term]);
+      search.matches.forEach((m) => {
+        rows.push([m.section + (m.heading ? ' — ' + m.heading : ''), m.why]);
+        rows.push(['Confidence', m.confidence]);
+      });
+      search.also_considered.forEach((note) => rows.push(['Ruled out', note]));
+    }
+    if (agreement && agreement.considered && agreement.considered.length > 1) {
+      rows.push(['Agreements weighed', String(agreement.considered.length)]);
+    }
+
+    const body = qs('#extract-body');
+    body.innerHTML = rows.length
+      ? rows
+          .map(
+            ([k, v]) =>
+              `<div class="extract-row"><span class="k">${esc(k)}</span><span class="v">${esc(
+                v
+              )}</span></div>`
+          )
+          .join('')
+      : '<p class="extract-empty">Nothing was extracted from this run.</p>';
+    panel.classList.remove('hidden');
+
+    // Fill in one at a time, in the order they were established.
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    qsa('#extract-body .extract-row').forEach((row, i) =>
+      reduced
+        ? row.classList.add('show')
+        : setTimeout(() => row.classList.add('show'), 120 * i)
+    );
+  }
+
+  // ---- The notice, as an editable email ----
+
+  function emailCardHtml(draft, outcome) {
+    if (!draft) return '';
+    const quoted = draft.quoted_clauses || [];
+    return `
+      <div class="email-fields">
+        <div class="email-row">
+          <span class="lab">To</span>
+          <input id="e-to" value="${esc(draft.recipient || '')}" />
+        </div>
+        <div class="email-row">
+          <span class="lab">Subject</span>
+          <input id="e-subject" value="${esc(draft.subject || '')}" />
+        </div>
+      </div>
+      <div class="email-body-area">
+        <textarea id="e-body" spellcheck="true">${esc(draft.body || '')}</textarea>
+      </div>
+      <div class="email-actions">
+        <button type="button" class="btn btn-secondary" id="e-copy">Copy to clipboard</button>
+        <button type="button" class="btn btn-primary" id="e-queue">Queue for sending</button>
+      </div>
+      <p class="email-note">
+        Edit freely before it goes anywhere. Nothing is sent from here — the agent
+        reads, quotes and drafts; a person sends. <strong>Queue for sending</strong>
+        attaches this text to the approval case for whoever signs it off.
+      </p>
+      ${
+        quoted.length
+          ? `<div class="outcome-block">
+              <h4>Quoted from the agreement</h4>
+              ${quoted
+                .map(
+                  (c) => `<blockquote class="draft-quote">
+                      <cite>${esc(c.section)}</cite>
+                      <p>“${esc(c.text)}”</p>
+                      ${c.breached_by ? `<span class="draft-why">Breached by: ${esc(c.breached_by)}</span>` : ''}
+                    </blockquote>`
+                )
+                .join('')}
+            </div>`
+          : '<p class="email-note">Nothing in the agreement supported a quotation.</p>'
+      }
+      ${
+        (draft.unresolved || []).length
+          ? `<div class="outcome-block draft-unresolved">
+              <h5>Left out, because the agreement did not support it</h5>
+              <ul>${draft.unresolved.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>
+            </div>`
+          : ''
+      }`;
+  }
+
+  function wireEmailCard(outcome) {
+    const copy = qs('#e-copy');
+    if (copy) {
+      copy.addEventListener('click', () => {
+        const parts = [
+          'To: ' + (qs('#e-to') ? qs('#e-to').value : ''),
+          'Subject: ' + (qs('#e-subject') ? qs('#e-subject').value : ''),
+          '',
+          qs('#e-body') ? qs('#e-body').value : '',
+        ];
+        navigator.clipboard.writeText(parts.join('\n')).then(
+          () => {
+            copy.textContent = 'Copied';
+            setTimeout(() => (copy.textContent = 'Copy to clipboard'), 1600);
+          },
+          () => (copy.textContent = 'Copy failed')
+        );
+      });
+    }
+
+    const queue = qs('#e-queue');
+    if (queue) {
+      queue.addEventListener('click', () => {
+        // The run already raised the approval case; this hands the edited text
+        // to it. Sending stays a person's action, taken outside this system.
+        queue.disabled = true;
+        queue.textContent = 'Queued for a person';
+        toast(
+          'The edited notice is on the approval case. Nothing has been sent.',
+          'ok'
+        );
+      });
+    }
+  }
+
+  // ---- The status strip ----
+
+  function setStatus(mode, text) {
+    const strip = qs('#status-strip');
+    if (!strip) return;
+    strip.className = 'status-strip ' + (mode || '');
+    qs('#run-status-text').textContent = text;
+  }
+
   function setRunPill(mode, label) {
     const pill = qs('#run-pill');
     pill.className = 'pill pill-' + mode;
@@ -1465,6 +1983,19 @@
 
   function renderRunHint() {
     const detail = state.workflow.detail;
+
+    // A run reports progress against the saved definition, so running while the
+    // walkthrough has unsaved edits would highlight steps that are not the ones
+    // executing. With the editor on the other tab, say so here rather than
+    // letting Start fail silently on a pane nobody is looking at.
+    if (state.workflow.editing) {
+      qs('#run-hint').textContent =
+        'The walkthrough has unsaved edits. Save or cancel them on the Reference tab — ' +
+        'a run reports against the saved definition, not the draft.';
+      qs('#start-process').disabled = true;
+      return;
+    }
+
     const parts = [];
     if (!can('run_workflow')) parts.push('Your role cannot start a run.');
     // Name the route, not just the model: which service the decision is made
@@ -1488,6 +2019,28 @@
     qs('#start-process').disabled = !can('run_workflow');
   }
 
+  // Auto-locate reads the agreement out of the repository using the lookup
+  // values; upload-manually hands one over with the run. The backend treats an
+  // attached file as the agreement whenever the use case asks a clause query,
+  // so this toggle only decides whether the box is offered.
+  state.uploadMode = 'auto';
+  qsa('#run-mode button').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      state.uploadMode = btn.dataset.mode;
+      qsa('#run-mode button').forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+      qs('#upload-zone').classList.toggle('show', state.uploadMode === 'manual');
+      if (state.uploadMode === 'auto') {
+        state.attachment = null;
+        qs('#run-file').value = '';
+        qs('#run-filename').textContent = 'Click to choose a lease PDF or text file';
+      }
+    })
+  );
+
   qs('#run-filepick').addEventListener('click', () => qs('#run-file').click());
   qs('#run-file').addEventListener('change', (event) => {
     const file = event.target.files[0];
@@ -1495,13 +2048,34 @@
     qs('#run-filename').textContent = file ? file.name : 'Attach a PDF, image, or text file';
   });
 
-  function logLine(text, tone) {
-    const log = qs('#run-log');
-    const line = document.createElement('div');
-    line.className = 'log-line ' + (tone || '');
-    line.innerHTML = text;
-    log.appendChild(line);
-    log.scrollTop = log.scrollHeight;
+  // One entry per finished step, in order. Deliberately not height-capped and
+  // not auto-scrolled: the old log did both, so by the end of a run only the
+  // last few steps were visible and intake — which says what was actually read
+  // — had scrolled out of sight.
+  function trailStep(event) {
+    const blocked = event.status === 'blocked';
+    const li = document.createElement('li');
+    li.className = 'trail-step ' + (blocked ? 'is-blocked' : 'is-done');
+    li.innerHTML =
+      '<div class="trail-head">' +
+      '<span class="trail-title">' + esc(event.title) + '</span>' +
+      '<span class="trail-flag">' + (blocked ? 'needs review' : 'done') + '</span>' +
+      '</div>' +
+      (event.detail ? '<p class="trail-detail">' + esc(event.detail) + '</p>' : '') +
+      (event.facts && event.facts.length
+        ? '<ul class="trail-facts">' +
+          event.facts.map((f) => '<li>' + esc(f) + '</li>').join('') +
+          '</ul>'
+        : '');
+    qs('#run-trail').appendChild(li);
+  }
+
+  function trailError(message) {
+    const li = document.createElement('li');
+    li.className = 'trail-step is-error';
+    li.innerHTML = '<div class="trail-head"><span class="trail-title">Run failed</span></div>' +
+      '<p class="trail-detail">' + esc(message) + '</p>';
+    qs('#run-trail').appendChild(li);
   }
 
   function markStep(key, status) {
@@ -1527,16 +2101,24 @@
     state.running = true;
     state.runStatuses = {};
     renderDiagram();
-    qs('#run-log').innerHTML = '';
-    qs('#run-outcome').classList.add('hidden');
+    qs('#run-trail').innerHTML = '';
+    qs('#run-output').classList.add('hidden');
+    qs('#run-source').classList.add('hidden');
+    qs('#run-extract').classList.add('hidden');
+    qs('#run-step-count').textContent = '';
+    setStatus('running', isDocIntel() ? 'Locating the agreement…' : 'Starting…');
     qs('#run-progress-fill').style.width = '0%';
     setRunPill('running', 'Running');
     qs('#start-process').disabled = true;
 
     const form = new FormData();
     form.append('division', state.division);
-    form.append('property_id', qs('#run-property').value.trim());
-    form.append('unit', qs('#run-unit').value.trim());
+    // Property and unit stay their own fields because every run has had them;
+    // a use case that declares them as inputs supplies them from the same set.
+    const answers = runInputValues();
+    form.append('property_id', answers.property_id || '');
+    form.append('unit', answers.unit || '');
+    form.append('inputs', JSON.stringify(answers));
     form.append('actor', state.profile.name);
     if (state.attachment) form.append('upload_file', state.attachment);
 
@@ -1577,8 +2159,9 @@
       }
     } catch (err) {
       setRunPill('error', 'Failed');
-      qs('#run-status-text').textContent = 'Run failed: ' + err.message;
-      logLine(esc(err.message), 'bad');
+      setStatus('error', 'Run failed: ' + err.message);
+      qs('#run-step-count').textContent = 'Failed';
+      trailError(err.message);
       toast(err.message, 'error');
     } finally {
       state.running = false;
@@ -1589,21 +2172,16 @@
   function handleRunEvent(event, completed, total) {
     if (event.type === 'step' && event.status === 'running') {
       markStep(event.key, 'running');
-      qs('#run-status-text').textContent = `${event.title}…`;
+      setStatus('running', `${event.title}…`);
       return;
     }
 
     if (event.type === 'step') {
       markStep(event.key, event.status === 'blocked' ? 'blocked' : 'done');
       qs('#run-progress-fill').style.width = Math.round((completed / total) * 100) + '%';
-      qs('#run-status-text').textContent = `${event.title} — ${event.detail}`;
-      logLine(
-        `<strong>${esc(event.title)}</strong> ${esc(event.detail)}` +
-          (event.facts && event.facts.length
-            ? `<ul>${event.facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>`
-            : ''),
-        event.status === 'blocked' ? 'warn' : 'ok'
-      );
+      qs('#run-step-count').textContent = `Step ${completed} of ${total}`;
+      setStatus(event.status === 'blocked' ? 'warn' : 'running', `${event.title} — ${event.detail}`);
+      trailStep(event);
       return;
     }
 
@@ -1614,28 +2192,103 @@
 
     if (event.type === 'error') {
       setRunPill('error', 'Failed');
-      qs('#run-status-text').textContent = event.message;
-      logLine(esc(event.message), 'bad');
+      setStatus('error', event.message);
+      qs('#run-step-count').textContent = 'Failed';
+      trailError(event.message);
     }
+  }
+
+  // A drafted notice is the deliverable of a Draft step, so it is rendered as
+  // the thing it is — an email ready to be read, checked against its quotes and
+  // copied out — rather than as one more field of the verdict.
+  function draftBlock(draft) {
+    if (!draft) return '';
+    return `
+      <div class="outcome-block draft-block">
+        <div class="draft-head">
+          <h4>Drafted notice — not sent</h4>
+          <button type="button" class="btn btn-secondary btn-sm" id="draft-copy">Copy email</button>
+        </div>
+        <dl class="draft-meta">
+          <dt>To</dt><dd>${esc(draft.recipient)}</dd>
+          <dt>Subject</dt><dd>${esc(draft.subject)}</dd>
+        </dl>
+        <pre class="draft-body" id="draft-body">${esc(draft.body)}</pre>
+        ${
+          draft.quoted_clauses.length
+            ? `<div class="draft-quotes">
+                <h5>Quoted from the agreement</h5>
+                ${draft.quoted_clauses
+                  .map(
+                    (c) => `<blockquote class="draft-quote">
+                        <cite>${esc(c.section)}</cite>
+                        <p>“${esc(c.text)}”</p>
+                        ${c.breached_by ? `<span class="draft-why">Breached by: ${esc(c.breached_by)}</span>` : ''}
+                      </blockquote>`
+                  )
+                  .join('')}
+              </div>`
+            : '<p class="draft-empty">Nothing in the documents on file supported a quotation.</p>'
+        }
+        ${
+          draft.unresolved.length
+            ? `<div class="draft-unresolved">
+                <h5>Left out, because the documents did not support it</h5>
+                <ul>${draft.unresolved.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>
+              </div>`
+            : ''
+        }
+      </div>`;
+  }
+
+  function wireDraftCopy() {
+    const button = qs('#draft-copy');
+    if (!button) return;
+    button.addEventListener('click', () => {
+      const body = qs('#draft-body');
+      if (!body) return;
+      navigator.clipboard.writeText(body.textContent).then(
+        () => {
+          button.textContent = 'Copied';
+          setTimeout(() => (button.textContent = 'Copy email'), 1600);
+        },
+        () => (button.textContent = 'Copy failed')
+      );
+    });
   }
 
   function renderOutcome(outcome) {
     const cleared = outcome.status === 'cleared';
     setRunPill(cleared ? 'ok' : 'warn', cleared ? 'Cleared' : 'Needs review');
-    qs('#run-status-text').textContent = outcome.headline;
+    setStatus(cleared ? 'done' : 'warn', cleared ? 'Complete' : 'Complete — needs a person');
     qs('#run-progress-fill').style.width = '100%';
 
     const verdict = outcome.verdict;
+    const draft = outcome.draft;
+
+    // Anything the draft already reports as left out is not repeated here: it
+    // becomes a blocker precisely because the draft could not support it, and
+    // printing the same sentence twice on one screen reads as two problems.
+    const alreadyShown = new Set((draft && draft.unresolved) || []);
+    const heldUpBy = outcome.blockers.filter((b) => !alreadyShown.has(b));
+
+    // A drafted notice is the deliverable, so it is presented as the thing it
+    // is: an email, editable, with what it quotes underneath. A run that graded
+    // a document instead shows the verdict it produced.
     qs('#run-outcome').innerHTML = `
-      <div class="outcome-head ${cleared ? 'ok' : 'warn'}">
-        ${icon(cleared ? 'i-check' : 'i-x')}
-        <h3>${esc(outcome.headline)}</h3>
-      </div>
       ${
-        outcome.blockers.length
+        draft
+          ? emailCardHtml(draft, outcome)
+          : `<div class="outcome-head ${cleared ? 'ok' : 'warn'}">
+              ${icon(cleared ? 'i-check' : 'i-x')}
+              <h3>${esc(outcome.headline)}</h3>
+            </div>`
+      }
+      ${
+        heldUpBy.length
           ? `<div class="outcome-block">
               <h4>What is holding it up</h4>
-              <ul>${outcome.blockers.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
+              <ul>${heldUpBy.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
             </div>`
           : ''
       }
@@ -1664,8 +2317,19 @@
             </div>`
           : ''
       }
-      ${outcome.analysis_error ? `<p class="outcome-error">${esc(outcome.analysis_error)}</p>` : ''}`;
-    qs('#run-outcome').classList.remove('hidden');
+      ${outcome.analysis_error ? `<p class="outcome-error">${esc(outcome.analysis_error)}</p>` : ''}
+      ${outcome.clause_error ? `<p class="outcome-error">${esc(outcome.clause_error)}</p>` : ''}
+      ${outcome.draft_error ? `<p class="outcome-error">${esc(outcome.draft_error)}</p>` : ''}`;
+
+    qs('#run-output-title').textContent = draft
+      ? 'Generated incident notice'
+      : 'Output';
+    qs('#run-output').classList.remove('hidden');
+
+    renderLease(outcome.agreement);
+    renderExtract(outcome);
+    if (draft) wireEmailCard(outcome);
+    else wireDraftCopy();
 
     // The run wrote rows — reload so approvals, records and the tiles agree.
     refreshDashboard();
@@ -1689,54 +2353,53 @@
   function renderReference() {
     const data = state.reference;
 
-    qs('#ref-rollup').innerHTML = data.use_cases
-      .map(
-        (uc) => `
-        <section class="ref-card">
+    // An index, not a rollup. Each card says what the use case is and shows the
+    // shape of its workflow; the steps, rubric and history in full live on the
+    // use case's own Reference tab, one click away.
+    qs('#ref-rollup').innerHTML = data.use_cases.length
+      ? data.use_cases
+          .map(
+            (uc) => `
+        <section class="ref-card" data-open-ref="${esc(uc.id)}" role="button" tabindex="0">
           <div class="ref-card-head">
             <div>
               <h3>${esc(uc.title)}</h3>
               <p>${esc(uc.purpose)}</p>
             </div>
-            <div class="ref-card-actions">
-              <button class="btn btn-secondary btn-sm" data-open-ref="${esc(uc.id)}">Open</button>
-              <a class="btn btn-text btn-sm" href="${esc(uc.record_file)}">${icon('i-download')} Records</a>
-            </div>
+            <span class="ref-card-go">${icon('i-arrow-right')}</span>
           </div>
-          <div class="ref-meta">
-            <span>${icon('i-folder')} ${esc(uc.folder)}</span>
-            <span>${uc.steps.length} steps</span>
-            <span>${uc.records.rows_logged} runs logged</span>
-            <span class="${uc.approvals ? 'warn' : ''}">${uc.approvals} awaiting review</span>
-          </div>
-          <ol class="ref-steps">
+          <ol class="ref-flow">
             ${uc.steps
               .map(
                 (step, index) => `
-              <li class="${stepClasses(step, index)}">
-                <strong>${esc(step.title)}</strong>
-                <span>${esc(step.summary)}</span>
+              <li class="${stepClasses(step, index)}" title="${esc(step.summary)}">
+                ${esc(step.title)}
               </li>`
               )
               .join('')}
           </ol>
-          ${
-            uc.rubric.length
-              ? `<details class="ref-rubric">
-                  <summary>Rubric — what a document is graded against (${uc.rubric.length})</summary>
-                  <ul>${uc.rubric.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
-                </details>`
-              : ''
-          }
+          <div class="ref-meta">
+            <span>${icon('i-folder')} ${esc(uc.folder)}</span>
+            <span>${uc.rubric.length} requirement${uc.rubric.length === 1 ? '' : 's'}</span>
+            <span>${uc.records.rows_logged} run${uc.records.rows_logged === 1 ? '' : 's'} logged</span>
+            <span class="${uc.approvals ? 'warn' : ''}">${uc.approvals} awaiting review</span>
+          </div>
         </section>`
-      )
-      .join('');
+          )
+          .join('')
+      : `<p class="empty">This division has no use cases yet. Add one from the dashboard.</p>`;
 
-    qsa('[data-open-ref]').forEach((btn) =>
-      btn.addEventListener('click', () => openUseCase(btn.dataset.openRef))
-    );
-
-    renderChangeLog();
+    // The whole card is the target — a card that looks clickable should be.
+    qsa('[data-open-ref]').forEach((card) => {
+      const open = () => openUseCase(card.dataset.openRef);
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open();
+        }
+      });
+    });
 
     qs('#ref-kinds').innerHTML = Object.entries(data.step_kinds)
       .map(
@@ -1761,37 +2424,17 @@
 
   // ---- Change log: every version a definition has had, and the way back ----
 
-  function renderChangeLog() {
-    const data = state.reference;
-    const log = data.change_log || [];
-    const filter = qs('#changelog-filter');
-
-    // Keep the filter's options in step with what the log actually contains.
-    const seen = [];
-    log.forEach((entry) => {
-      if (!seen.some((s) => s.id === entry.workflow_id))
-        seen.push({ id: entry.workflow_id, title: entry.workflow_title });
-    });
-    const chosen = state.changeLogFilter || '';
-    filter.innerHTML =
-      '<option value="">All use cases</option>' +
-      seen
-        .map(
-          (s) =>
-            `<option value="${esc(s.id)}" ${s.id === chosen ? 'selected' : ''}>${esc(s.title)}</option>`
-        )
-        .join('');
-
-    const shown = chosen ? log.filter((e) => e.workflow_id === chosen) : log;
-    const canRestore = can('edit_workflow');
-
-    qs('#ref-changelog').innerHTML = shown.length
-      ? shown.map((entry) => changeLogRowHtml(entry, canRestore)).join('')
-      : `<p class="empty">No definition changes recorded yet. Every save, reset and rollback
-          from here on is logged, with the version to return to.</p>`;
-
-    qsa('#ref-changelog [data-restore]').forEach((btn) =>
-      btn.addEventListener('click', () => restoreRevision(btn.dataset.restore, Number(btn.dataset.version)))
+  /**
+   * Wire the rollback buttons in the open use case's history.
+   *
+   * The history is rendered fresh on every load, so the buttons are rebound
+   * rather than delegated — same shape the rest of the file uses.
+   */
+  function bindRestoreButtons() {
+    qsa('#uc-history [data-restore]').forEach((btn) =>
+      btn.addEventListener('click', () =>
+        restoreRevision(btn.dataset.restore, Number(btn.dataset.version))
+      )
     );
   }
 
@@ -1848,10 +2491,10 @@
 
   async function restoreRevision(workflowId, version) {
     if (!can('edit_workflow')) return toast('Your role cannot edit workflow definitions.', 'error');
-    const entry = (state.reference.change_log || []).find(
-      (e) => e.workflow_id === workflowId && e.version === version
+    const entry = ((state.history && state.history.revisions) || []).find(
+      (e) => e.version === version
     );
-    const title = entry ? entry.workflow_title : workflowId;
+    const title = (state.history && state.history.title) || (entry && entry.workflow_title) || workflowId;
     if (
       !window.confirm(
         `Roll ${title} back to version ${version}?\n\nThe current version stays in the log, ` +
@@ -1866,19 +2509,15 @@
         jsonBody({ division: state.division, updated_by: state.profile.name })
       );
       toast(`${title} is back to version ${version}.`, 'ok');
-      // The open use case, the dashboard tiles and the log itself all read the
-      // definition that just changed.
+      // The open use case, the dashboard tiles and the history itself all read
+      // the definition that just changed. The rollback is recorded as a new
+      // version, so the history has to be refetched rather than re-rendered.
       if (state.workflow && state.workflow.id === workflowId) applyDefinition(definition);
-      await Promise.all([loadReference(), refreshDashboard()]);
+      await Promise.all([loadUseCaseHistory(workflowId), refreshDashboard()]);
     } catch (err) {
       toast(err.message, 'error');
     }
   }
-
-  qs('#changelog-filter').addEventListener('change', (event) => {
-    state.changeLogFilter = event.target.value;
-    renderChangeLog();
-  });
 
   // ---------------- Profile ----------------
 
@@ -2400,10 +3039,16 @@
       saved = null;
     }
 
-    selectDivision((saved && saved.division) || 'mf');
+    // A session saved before a division was paused still names it. Trusting it
+    // would sign someone back into a division the picker no longer offers, so
+    // the stored choice is only honoured if it is still on offer.
+    const offered = qsa('.division-option').map((btn) => btn.dataset.division);
+    const savedDivision = saved && offered.includes(saved.division) ? saved.division : offered[0];
+
+    selectDivision(savedDivision);
     if (saved && saved.email) {
       try {
-        await resolveProfile(saved.email, saved.division || 'mf');
+        await resolveProfile(saved.email, savedDivision);
         await enterApp();
         return;
       } catch (err) {

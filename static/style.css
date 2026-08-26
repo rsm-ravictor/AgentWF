@@ -360,6 +360,8 @@ textarea { resize: vertical; font-family: inherit; }
 .logo-mark.small { width: 28px; height: 28px; font-size: 13px; }
 
 .division-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 24px; }
+/* One active division: a single wide option rather than a lonely third of a row. */
+.division-picker-single { grid-template-columns: 1fr; }
 .division-picker .d-title { font-size: var(--fs-sm); }
 .division-option {
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
@@ -631,6 +633,26 @@ textarea { resize: vertical; font-family: inherit; }
 .uc-head-meta { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* The 2/3 + 1/3 split the whole product is built around */
+/* ---- Reference / Execution tabs ----
+   Same vocabulary as the top nav tabs so the two strips read as one system,
+   sized up a step because these switch the body of the page rather than the
+   whole view. */
+.uc-tabs {
+  display: flex; gap: 4px; margin: 4px 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+.uc-tab {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 11px 18px; border: none; background: none; cursor: pointer;
+  font: inherit; font-size: var(--fs-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: var(--track);
+  color: var(--text-faint);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.uc-tab .icon { width: 15px; height: 15px; }
+.uc-tab:hover { color: var(--text); }
+.uc-tab.active { color: var(--brand-text); border-bottom-color: var(--brand-text); }
+
 .uc-body { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; }
 
 /* ---- Workflow diagram ----
@@ -711,7 +733,7 @@ textarea { resize: vertical; font-family: inherit; }
 
 /* Step kinds no longer carry colour in the diagram; they remain as labels, and
    as a neutral marker where a list needs one. */
-.kind-intake, .kind-analysis, .kind-decision, .kind-human, .kind-record, .kind-note {
+.kind-intake, .kind-analysis, .kind-draft, .kind-decision, .kind-human, .kind-record, .kind-note {
   --kind-color: var(--border-strong);
 }
 
@@ -779,7 +801,54 @@ textarea { resize: vertical; font-family: inherit; }
 /* ---- Run footer ---- */
 
 .uc-run { margin-top: 16px; }
-.run-controls { display: grid; grid-template-columns: 170px 130px 1fr auto; gap: 14px; align-items: end; }
+/* The run form is built from what the use case declares, so its shape is not
+   known here: text boxes flow into as many columns as fit, and a box that takes
+   an account of something spans the row. */
+.run-controls { display: flex; flex-direction: column; gap: 16px; }
+.run-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.run-fields .field-wide { grid-column: 1 / -1; }
+.run-fields textarea {
+  width: 100%; padding: 9px 12px; font: inherit; font-size: var(--fs-sm);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--bg-raised); color: var(--text); resize: vertical; min-height: 96px;
+  line-height: 1.6;
+}
+.run-fields textarea:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+/* What a value is for, said next to the box rather than in a paragraph below
+   the form: the three lookup boxes and the account box do different jobs. */
+/* On its own line, not trailing the label: inline, a long hint wrapped and
+   pushed that one field's box below its neighbours'. Every field in a set
+   either has a hint or does not, so a block hint keeps the boxes aligned. */
+.field-role {
+  display: block; margin-top: 3px; font-size: var(--fs-xs); font-weight: 600;
+  text-transform: none; letter-spacing: 0; color: var(--text-faint); font-style: italic;
+}
+.run-actions { display: flex; align-items: end; gap: 14px; }
+.run-actions .field-file { flex: 1 1 auto; }
+
+/* The source beside what was written from it. */
+.run-results { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
+.run-results > .panel { margin-top: 16px; }
+.run-results > .panel.hidden { display: none; }
+.run-results:has(> .run-source.hidden) { grid-template-columns: 1fr; }
+
+.lease-why { font-size: var(--fs-xs); color: var(--text-faint); margin-top: 8px; }
+.lease-jump { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.lease-missed { font-size: var(--fs-xs); color: var(--status-review); }
+.lease-doc {
+  margin-top: 12px; padding: 14px 15px; border-radius: var(--radius-sm);
+  background: var(--bg-alt); border: 1px solid var(--border);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: var(--fs-xs); line-height: 1.7; color: var(--text-soft);
+  white-space: pre-wrap; overflow: auto; max-height: 620px;
+}
+/* The match. Marked rather than merely tinted, so it is findable while
+   scrolling and still legible in both themes. */
+.lease-hit {
+  background: var(--status-review-wash); color: var(--text);
+  border-radius: 3px; padding: 1px 2px;
+  box-shadow: inset 0 -2px 0 var(--status-review);
+}
 .filepick {
   display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 12px;
   border: 1px dashed var(--border-strong); border-radius: var(--radius-sm);
@@ -796,24 +865,44 @@ textarea { resize: vertical; font-family: inherit; }
 .run-progress span { display: block; height: 100%; width: 0; background: var(--status-progress); transition: width .35s ease; }
 .run-status-text { font-size: var(--fs-sm); color: var(--text-soft); margin-top: 10px; font-weight: 600; }
 
-.run-log {
-  margin-top: 14px; max-height: 280px; overflow-y: auto;
-  background: var(--bg-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 16px;
-}
-.run-log:empty { display: none; }
-.log-line { font-size: var(--fs-sm); color: var(--text-soft); padding: 10px 0; border-bottom: 1px solid var(--border); }
-.log-line:last-child { border-bottom: none; }
-.log-line strong { color: var(--text); margin-right: 8px; font-weight: 700; }
-.log-line ul { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; }
-.log-line li { padding-left: 13px; position: relative; color: var(--text-faint); }
-.log-line li::before { content: '·'; position: absolute; left: 4px; }
-.log-line.warn strong { color: var(--status-review); }
-.log-line.bad { color: var(--danger); }
+/* ---- The Execution page: what is happening, then what came out ----
+   The run diagram is the same component the Reference tab draws, at a smaller
+   size: watching a run and learning the use case should not be two pictures. */
 
-.run-outcome {
-  margin-top: 16px; border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 18px 20px; background: var(--bg-alt);
+.run-visual, .run-output { margin-top: 16px; }
+.diagram-run { min-height: 0; padding: 4px 0 2px; }
+.diagram-run .node { padding: 11px 12px; gap: 6px; flex-basis: 130px; min-width: 118px; }
+.diagram-run .node-title { font-size: var(--fs-xs); }
+.diagram-run .connector { flex-basis: 16px; }
+
+/* The trail: one entry per finished step, in order. No height cap and no
+   auto-scroll — the whole run stays on the page, which the old log did not. */
+.run-trail { margin-top: 16px; display: flex; flex-direction: column; gap: 2px; }
+.run-trail:empty { display: none; }
+.trail-step {
+  padding: 12px 14px; border-left: 3px solid var(--border-strong);
+  background: var(--bg-alt); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
+.trail-step.is-blocked { border-left-color: var(--status-review); }
+.trail-step.is-done { border-left-color: var(--status-done); }
+.trail-step.is-error { border-left-color: var(--danger); }
+.trail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.trail-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
+.trail-flag {
+  font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;
+  letter-spacing: var(--track); color: var(--text-faint); flex: none;
+}
+.trail-step.is-blocked .trail-flag { color: var(--status-review); }
+.trail-detail { margin-top: 5px; font-size: var(--fs-sm); color: var(--text-soft); max-width: 92ch; }
+.trail-facts { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; }
+.trail-facts li {
+  font-size: var(--fs-xs); color: var(--text-faint); padding-left: 14px;
+  position: relative; max-width: 96ch;
+}
+.trail-facts li::before { content: '·'; position: absolute; left: 5px; }
+
+/* The outcome now sits inside the Output panel, which supplies the frame. */
+.run-outcome { padding: 0; background: none; border: none; }
 .outcome-head { display: flex; align-items: center; gap: 10px; }
 .outcome-head h3 { font-size: var(--fs-md); color: inherit; }
 .outcome-head.ok { color: var(--status-done); }
@@ -850,9 +939,75 @@ textarea { resize: vertical; font-family: inherit; }
 }
 .fields em { color: var(--text-faint); font-style: normal; margin-right: 6px; font-weight: 600; }
 
+/* A drafted notice. Rendered as an email rather than as another verdict field:
+   the reviewer's job is to read it, check it against the passages it quotes, and
+   send it themselves — so the body is monospaced and unwrapped by us, and the
+   quotations sit beside it where they can be compared to the source. */
+.draft-block {
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--bg-alt); padding: 15px 16px;
+}
+.draft-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.draft-meta {
+  display: grid; grid-template-columns: 68px 1fr; gap: 4px 12px;
+  margin-top: 12px; font-size: var(--fs-sm);
+}
+.draft-meta dt {
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: var(--track);
+  color: var(--text-faint); font-weight: 700; padding-top: 2px;
+}
+.draft-meta dd { color: var(--text); font-weight: 600; }
+.draft-body {
+  margin-top: 12px; padding: 14px 15px; border-radius: var(--radius-sm);
+  background: var(--bg-raised); border: 1px solid var(--border);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: var(--fs-xs); line-height: 1.65; color: var(--text);
+  white-space: pre-wrap; overflow-x: auto; max-height: 420px; overflow-y: auto;
+}
+.draft-quotes, .draft-unresolved { margin-top: 14px; }
+.draft-quotes h5, .draft-unresolved h5 {
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: var(--track);
+  color: var(--text-faint); font-weight: 700;
+}
+.draft-quote {
+  margin-top: 8px; padding: 10px 13px; border-left: 3px solid var(--brand);
+  background: var(--bg-raised); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.draft-quote cite {
+  font-style: normal; font-weight: 700; font-size: var(--fs-xs); color: var(--brand-text);
+}
+.draft-quote p { margin-top: 5px; font-size: var(--fs-sm); color: var(--text); font-style: italic; }
+.draft-why { display: block; margin-top: 6px; font-size: var(--fs-xs); color: var(--text-faint); }
+.draft-unresolved ul { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+.draft-unresolved li {
+  font-size: var(--fs-sm); color: var(--status-review, var(--text-soft));
+  padding-left: 15px; position: relative;
+}
+.draft-unresolved li::before { content: '—'; position: absolute; left: 0; }
+.draft-empty { margin-top: 12px; font-size: var(--fs-sm); color: var(--text-faint); font-style: italic; }
+
 /* ---- State panels under the run ---- */
 
 .uc-state { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+
+/* Rubric and change history sit side by side under the diagram: what a run is
+   graded against, and how the definition got to this version. */
+.uc-ref-extra { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }
+.rubric-list { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; counter-reset: rubric; }
+.rubric-list li {
+  font-size: var(--fs-sm); color: var(--text-soft);
+  padding-left: 30px; position: relative; line-height: 1.5;
+}
+.rubric-list li::before {
+  counter-increment: rubric; content: counter(rubric);
+  position: absolute; left: 0; top: 1px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--bg-alt); color: var(--text-faint);
+  font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.rubric-list li.empty { padding-left: 0; color: var(--text-faint); }
+.rubric-list li.empty::before { content: none; }
 .rec-summary { display: flex; gap: 22px; flex-wrap: wrap; }
 .rec-summary div { display: flex; flex-direction: column; }
 .rec-summary strong { font-size: var(--fs-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -899,9 +1054,27 @@ textarea { resize: vertical; font-family: inherit; }
 
 /* ---------------- 4. Reference ---------------- */
 
+/* The index card is the whole target — it opens that use case's own reference. */
 .ref-card {
   background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 22px; box-shadow: var(--shadow); margin-bottom: 14px;
+  cursor: pointer; transition: border-color .12s ease, transform .12s ease, box-shadow .12s ease;
+}
+.ref-card:hover, .ref-card:focus-visible {
+  border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-lg, var(--shadow));
+}
+.ref-card:focus-visible { outline: 2px solid var(--brand-text); outline-offset: 2px; }
+.ref-card-go { color: var(--text-faint); flex-shrink: 0; }
+.ref-card:hover .ref-card-go { color: var(--brand-text); }
+
+/* A compact signature of the workflow's shape: step titles in sequence colour,
+   without the summaries that belong on the use case's own page. */
+.ref-flow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+.ref-flow li {
+  font-size: var(--fs-xs); font-weight: 600; color: var(--text-soft);
+  padding: 5px 11px 5px 9px; border-radius: var(--radius-sm);
+  background: var(--bg-alt);
+  border-left: 3px solid var(--node-fill, var(--border-strong));
 }
 .ref-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
 .ref-card-head h3 { font-size: var(--fs-md); }
@@ -1130,15 +1303,14 @@ textarea { resize: vertical; font-family: inherit; }
   .uc-state { grid-template-columns: 1fr; }
   .profile-grid { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
-  .run-controls { grid-template-columns: 1fr 1fr; }
-  .btn-run { grid-column: 1 / -1; }
+  .run-results { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 680px) {
   .app-nav { padding: 0 16px; height: auto; flex-wrap: wrap; gap: 12px; padding-block: 12px; }
   .app-main { padding: 22px 16px 60px; }
   .stat-grid { grid-template-columns: 1fr; }
-  .run-controls { grid-template-columns: 1fr; }
+  .run-actions { flex-direction: column; align-items: stretch; }
   .user-chip-text { display: none; }
   .division-badge { border-right: none; padding-right: 0; }
   .division-picker { grid-template-columns: 1fr; }
@@ -1146,4 +1318,277 @@ textarea { resize: vertical; font-family: inherit; }
   .node { flex-basis: 100%; }
   .uc-bar { top: 0; }
   .toast-wrap { right: 16px; left: 16px; bottom: 16px; }
+}
+
+/* The rubric/history pair stacks before the main grid does — two dense text
+   columns stop being readable well above the breakpoint the page uses. */
+@media (max-width: 1100px) {
+  .uc-ref-extra { grid-template-columns: 1fr; }
+}
+
+/* ===========================================================================
+   Document Intelligence — the Clause Search execution view
+   ===========================================================================
+   A different surface from the rest of the app on purpose: this view is about
+   reading a legal instrument, so it borrows the instrument's own conventions —
+   a cream ground, navy rules, gold for the thing you are meant to look at, and
+   the lease set as paper rather than as a text box.
+
+   Everything is scoped under .doc-intel, applied only to a use case that
+   declares a clause_query input. The insurance use cases share this pane and are
+   deliberately untouched by all of it.
+   ======================================================================== */
+
+.doc-intel {
+  --di-navy: #0c1f38;
+  --di-navy-mid: #16304f;
+  --di-cream: #f7f5f0;
+  --di-gold: #b8923f;
+  --di-line: #d9dce2;
+  --di-soft: #5b6472;
+  --di-paper: #ffffff;
+  --di-desk: #e7e6e2;
+  --di-rail: #dedcd7;
+  --di-ink: #1c1c1c;
+  --di-hit: rgba(184, 146, 63, 0.28);
+  --di-hit-live: rgba(184, 146, 63, 0.55);
+  --di-serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+
+  background: var(--di-cream);
+  margin: 0 -24px -60px;
+  padding: 24px 24px 60px;
+}
+
+/* The desk dims with the theme; the paper does not. A lease reads as paper. */
+:root[data-theme="dark"] .doc-intel,
+:root:not([data-theme="light"]) .doc-intel {
+  --di-cream: #14161a;
+  --di-line: #2b3038;
+  --di-soft: #98a2b3;
+  --di-desk: #1b1e24;
+  --di-rail: #22262d;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .doc-intel {
+    --di-cream: #f7f5f0;
+    --di-line: #d9dce2;
+    --di-soft: #5b6472;
+    --di-desk: #e7e6e2;
+    --di-rail: #dedcd7;
+  }
+}
+
+.doc-intel .panel {
+  background: var(--bg-raised); border: 1px solid var(--di-line);
+  border-radius: 3px; padding: 0; overflow: hidden;
+}
+
+/* Panel heads are the navy rule that holds the page together. */
+.doc-intel .panel-head {
+  background: var(--di-navy); color: #ffffff;
+  padding: 10px 16px; border: none; margin: 0;
+}
+.doc-intel .panel-head h2 {
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #ffffff;
+}
+.doc-intel .panel-head .ws-count { color: #b9c3d1; font-weight: 600; }
+
+.doc-intel .search-card > *:not(.panel-head) { padding-inline: 24px; }
+.doc-intel .search-desc { font-size: var(--fs-sm); color: var(--di-soft); margin-top: 16px; }
+.doc-intel .run-controls { padding-block: 18px 22px; }
+.doc-intel .run-fields { gap: 16px 20px; }
+.doc-intel .run-fields label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--di-soft); font-weight: 600;
+}
+.doc-intel .run-fields input,
+.doc-intel .run-fields textarea {
+  border: 1px solid var(--di-line); border-radius: 2px; padding: 9px 11px;
+  font-size: 13.5px; background: var(--bg-alt); color: var(--text);
+}
+.doc-intel .run-fields input:focus,
+.doc-intel .run-fields textarea:focus {
+  outline: none; border-color: var(--di-gold);
+  box-shadow: 0 0 0 3px rgba(184, 146, 63, 0.15);
+}
+
+/* Where the agreement comes from: found, or handed over. */
+.doc-intel .mode-toggle {
+  display: flex; margin-top: 18px; border: 1px solid var(--di-line);
+  border-radius: 2px; width: fit-content; overflow: hidden;
+}
+.doc-intel .mode-toggle button {
+  border: none; background: var(--bg-alt); padding: 8px 16px;
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--di-soft); cursor: pointer;
+}
+.doc-intel .mode-toggle button.active { background: var(--di-navy); color: #ffffff; }
+
+.doc-intel .upload-zone { margin-top: 14px; display: none; }
+.doc-intel .upload-zone.show { display: block; }
+.doc-intel .upload-zone .filepick {
+  border: 1.5px dashed var(--di-line); border-radius: 3px; padding: 20px;
+  justify-content: center; text-align: center; background: none; color: var(--di-soft);
+}
+.doc-intel .cta-row { display: flex; justify-content: flex-end; margin-top: 22px; }
+.doc-intel .btn-primary {
+  background: var(--di-navy); border-color: var(--di-navy); color: #ffffff;
+  border-radius: 2px; padding: 11px 26px; letter-spacing: 0.03em;
+}
+.doc-intel .btn-primary:hover:not(:disabled) {
+  background: var(--di-navy-mid); border-color: var(--di-navy-mid);
+}
+.doc-intel .run-hint { padding-bottom: 20px; color: var(--di-soft); }
+
+/* Status strip: one line, and a dot that says whether it is still moving. */
+.doc-intel .status-strip {
+  display: flex; align-items: center; gap: 8px; margin: 28px 0 12px;
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--di-soft);
+}
+.doc-intel .status-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--di-line); flex: none;
+}
+.doc-intel .status-strip.running .status-dot {
+  background: var(--di-gold); animation: di-pulse 1.2s infinite;
+}
+.doc-intel .status-strip.done .status-dot { background: #3d7a4f; }
+.doc-intel .status-strip.warn .status-dot { background: var(--di-gold); }
+.doc-intel .status-strip.error .status-dot { background: var(--danger); }
+.doc-intel .status-count { margin-left: auto; letter-spacing: 0.04em; }
+@keyframes di-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .doc-intel .status-strip.running .status-dot { animation: none; }
+  .doc-intel .lease-hit, .doc-intel .extract-row { transition: none; }
+}
+.doc-intel .run-progress { height: 2px; border: none; background: var(--di-line); border-radius: 0; }
+.doc-intel .run-progress span { background: var(--di-gold); }
+
+.doc-intel .cols {
+  display: grid; grid-template-columns: 1.5fr 1fr; gap: 20px;
+  margin-top: 16px; align-items: start;
+}
+.doc-intel .cols > .panel { margin-top: 0; }
+.doc-intel .cols:has(> .lease-panel.hidden) { grid-template-columns: 1fr; }
+
+/* ---- The lease, as paper on a desk ---- */
+.doc-intel .lease-panel-body { display: flex; }
+.doc-intel .thumb-rail {
+  width: 96px; flex: none; background: var(--di-rail);
+  border-right: 1px solid var(--di-line); padding: 14px 10px;
+  max-height: 560px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px; align-items: center;
+}
+.doc-intel .thumb {
+  width: 64px; height: 84px; background: #ffffff; border: 2px solid transparent;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); position: relative; cursor: pointer;
+  flex: none; padding: 0;
+}
+.doc-intel .thumb.active { border-color: var(--di-gold); }
+.doc-intel .thumb-lines { position: absolute; top: 10px; left: 8px; right: 8px; }
+.doc-intel .thumb-lines div { height: 2px; background: #d5d3cd; margin-bottom: 4px; }
+.doc-intel .thumb-num {
+  position: absolute; bottom: 4px; right: 6px; font-size: 9px; color: #9a9a95;
+}
+.doc-intel .thumb.found::after {
+  content: ''; position: absolute; top: 4px; left: 4px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--di-gold);
+}
+
+.doc-intel .lease-viewport {
+  flex: 1; background: var(--di-desk); padding: 24px;
+  max-height: 560px; overflow-y: auto; min-width: 0;
+}
+.doc-intel .lease-page {
+  background: #ffffff; max-width: 620px; margin: 0 auto 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12); padding: 48px 56px 56px;
+  font-family: "Times New Roman", Times, serif; color: var(--di-ink);
+  position: relative; white-space: pre-wrap; overflow-wrap: break-word;
+  font-size: 13.5px; line-height: 1.85;
+}
+.doc-intel .lease-page::before {
+  content: attr(data-page); position: absolute; bottom: 16px; right: 24px;
+  font-family: inherit; font-size: 10px; color: #9a9a95; letter-spacing: 0.04em;
+}
+.doc-intel .lease-sec { font-weight: bold; text-decoration: underline; }
+
+/* The match. Swept once as it is found, then left tinted. */
+.doc-intel .lease-hit {
+  background: var(--di-hit); color: var(--di-ink); border-radius: 1px; padding: 1px 2px;
+  box-shadow: none; transition: background .5s ease, box-shadow .5s ease;
+}
+.doc-intel .lease-hit.sweeping {
+  background: var(--di-hit-live); box-shadow: 0 0 0 1px var(--di-gold);
+}
+.doc-intel .lease-why { padding: 12px 16px 0; font-size: var(--fs-xs); color: var(--di-soft); }
+.doc-intel .lease-jump { padding: 10px 16px 16px; }
+.doc-intel .lease-jump .btn { border-radius: 2px; }
+
+/* ---- What was read out of it ---- */
+.doc-intel .extract-body { padding: 6px 20px 14px; }
+.doc-intel .extract-row {
+  display: flex; justify-content: space-between; gap: 14px; padding: 10px 0;
+  border-bottom: 1px solid var(--di-line);
+  opacity: 0; transform: translateY(4px);
+  transition: opacity .4s ease, transform .4s ease;
+}
+.doc-intel .extract-row.show { opacity: 1; transform: translateY(0); }
+.doc-intel .extract-row:last-child { border-bottom: none; }
+.doc-intel .extract-row .k {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--di-soft); font-weight: 600; flex: none; max-width: 42%;
+}
+.doc-intel .extract-row .v { font-size: 13px; color: var(--text); text-align: right; }
+.doc-intel .extract-empty {
+  font-size: 12.5px; color: var(--di-soft); text-align: center; padding: 30px 10px;
+}
+
+/* ---- The notice ---- */
+.doc-intel .email-card { margin-top: 20px; }
+.doc-intel .run-outcome { padding: 0; background: none; border: none; }
+.doc-intel .email-fields { padding: 18px 24px 6px; }
+.doc-intel .email-row {
+  display: flex; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--di-line);
+  font-size: 13px; align-items: baseline;
+}
+.doc-intel .email-row .lab {
+  width: 74px; flex: none; color: var(--di-soft); font-weight: 600;
+  text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em;
+}
+.doc-intel .email-row input {
+  border: none; font: inherit; font-size: 13px; width: 100%;
+  color: var(--text); background: transparent; padding: 0;
+}
+.doc-intel .email-row input:focus { outline: none; box-shadow: none; }
+.doc-intel .email-body-area { padding: 18px 24px 8px; }
+.doc-intel .email-body-area textarea {
+  width: 100%; min-height: 260px; border: 1px solid var(--di-line); border-radius: 2px;
+  padding: 14px; font-family: var(--di-serif); font-size: 14px; line-height: 1.7;
+  color: var(--text); background: var(--bg-alt); resize: vertical;
+}
+.doc-intel .email-actions {
+  display: flex; justify-content: flex-end; gap: 10px; padding: 12px 24px 22px; flex-wrap: wrap;
+}
+.doc-intel .email-actions .btn { border-radius: 2px; }
+.doc-intel .email-note {
+  padding: 0 24px 20px; font-size: var(--fs-xs); color: var(--di-soft); max-width: 84ch;
+}
+.doc-intel .outcome-head { padding: 16px 24px 0; }
+.doc-intel .outcome-block { padding: 0 24px; }
+.doc-intel .outcome-block:last-child { padding-bottom: 20px; }
+.doc-intel .outcome-error { margin: 0 24px 16px; }
+
+/* Run detail, folded away by default. */
+.doc-intel .run-visual { margin-top: 20px; }
+.doc-intel .run-visual > summary {
+  cursor: pointer; list-style: none; display: flex;
+  align-items: center; justify-content: space-between; gap: 12px;
+}
+.doc-intel .run-visual > summary::-webkit-details-marker { display: none; }
+.doc-intel .run-visual-body { padding: 16px 20px 20px; }
+.doc-intel .uc-state { margin-top: 20px; }
+
+@media (max-width: 1080px) {
+  .doc-intel .cols { grid-template-columns: 1fr; }
+  .doc-intel .thumb-rail { display: none; }
 }
