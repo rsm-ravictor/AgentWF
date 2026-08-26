@@ -5,9 +5,7 @@ document repository, and use cases that read documents, grade them against an
 explicit rubric, and hand every outcome to a person.
 
 `CONTEXT 2.0.md` is the source of truth for what this repo is and how it is
-structured. `USE-CASES.md` is the three Office/Retail use cases in detail — what
-each reads, grades against, and decides. This file is the short version of how to
-run it.
+structured. This file is the short version of how to run it.
 
 ## The shape of the app
 
@@ -85,12 +83,11 @@ the analysis step grades against. Its steps, versions and records live in
 
 Consequences worth knowing:
 
-- **Office/Retail ships with three use cases**: Insurance Certificate Audit,
-  Insurance Coverage Matching and Clause Search. `USE-CASES.md` is what each one
-  reads and decides. `workflow_repo.OFFICE_CATALOG` is that set and
-  `workflow_catalog.SEEDED_DIVISIONS` decides who gets it. `WORKFLOW_CATALOG` is
-  the paused residential set, kept because Residential and Construction rows
-  still reference it.
+- **Office/Retail ships with four use cases**: Repository Audit, Insurance
+  Certificate Audit, Insurance Coverage Matching and Clause Search.
+  `workflow_repo.OFFICE_CATALOG` is that set and `workflow_catalog.SEEDED_DIVISIONS`
+  decides who gets it. `WORKFLOW_CATALOG` is the paused residential set, kept
+  because Residential and Construction rows still reference it.
 - **Seeding runs once per division.** A use case someone retired stays retired
   across restarts.
 - **A new use case is runnable immediately.** It starts from the five-kind spine
@@ -126,18 +123,12 @@ does when it reaches it:
 
 | kind | what happens at that step |
 | --- | --- |
-| `intake` | Check the required documents against the repository, and read the ones that are there |
-| `analysis` | Grade an attached document against the rubric, with the on-file documents alongside it |
-| `draft` | Write the correspondence the reading calls for, quoting the documents verbatim |
+| `intake` | Check the required documents against the repository |
+| `analysis` | Grade an attached document against the rubric, or report what is on file |
 | `decision` | Apply the pass rule to everything gathered so far |
 | `human` | Queue an approval case when the run could not clear on its own |
 | `record` | Write the run to the workflow's record file |
 | `note` | Descriptive only — reported, but takes no action |
-
-An intake step does not only count documents — it opens the ones it matched, so a
-later step can quote out of them. Clause Search depends on that: the clause it
-quotes sits in the lease on file, not in the attachment. `draft` is a second
-model call, and only Clause Search uses it.
 
 ## Modules
 
@@ -146,7 +137,7 @@ model call, and only Clause Search uses it.
 - `aat_system/workflow_catalog.py` — which use cases a division has: create, rename, retire, and the shipped-set seeding.
 - `aat_system/workflow_repo.py` — the shipped sets (`OFFICE_CATALOG` active, `WORKFLOW_CATALOG` paused), definitions, revision history, required documents, records, glossary.
 - `aat_system/workflow_runner.py` — executes a use case step by step, yielding one event per state change.
-- `aat_system/llm_analyzer.py` — the graded verdict behind each decision, and the drafting that follows it. Grades against the rubric the runner passes in, which comes from the use case; the rubrics here are the shipped defaults. `draft_notice` writes the correspondence a Draft step produces.
+- `aat_system/llm_analyzer.py` — the graded verdict behind each decision. Grades against the rubric the runner passes in, which comes from the use case; the rubrics here are the shipped defaults.
 - `aat_system/connect.py` — the one LLM entry point: TritonAI's OpenAI-compatible proxy (`ask`, `ask_json`, `list_models`).
 - `aat_system/approval_repo.py` — the human-in-the-loop queue.
 - `aat_system/user_repo.py`, `auth.py`, `security.py` — roster, role scope, tokens.
