@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from .auth import get_allowed_folders
 from .config import (
+    ACTIVE_DIVISIONS,
+    DEFAULT_DIVISION,
     DIVISION_LABELS,
     PERMISSION_LABELS,
     ROLE_DESCRIPTIONS,
@@ -109,6 +111,27 @@ def resolve_session_user(db: Session, email: str, division: Division, name: str 
     db.add(user)
     db.commit()
     db.refresh(user)
+    return user
+
+
+def session_division(db: Session, user: User, signing_into: Division) -> User:
+    """Run a session in an active division when the account's own is paused.
+
+    Residential and Construction are paused, but their accounts still exist and
+    are still what people type at the login screen. Without this the division
+    picker's answer is silently discarded in favour of the row's stored value,
+    and signing in to Office/Retail lands in a division nothing routes to.
+
+    The stored row is deliberately left alone: pausing a business line must not
+    rewrite who belongs to it, or un-pausing one would find its roster moved out
+    from under it. The instance is detached first so the swap cannot be flushed
+    back, which makes this a property of the session rather than of the account.
+    """
+    if user.division in ACTIVE_DIVISIONS:
+        return user
+    target = signing_into if signing_into in ACTIVE_DIVISIONS else DEFAULT_DIVISION
+    db.expunge(user)
+    user.division = target
     return user
 
 

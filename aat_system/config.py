@@ -192,16 +192,27 @@ DIVISION_LABELS = {
     Division.CONSTRUCTION: "Construction",
 }
 
+# The division the system runs as when nothing says otherwise. Residential and
+# Construction are paused: their records stay in the database, but nothing routes
+# to them, so an unparameterised call lands in Office/Retail rather than in a
+# business line no one is working on.
+DEFAULT_DIVISION = Division.OFFICE
+DEFAULT_DIVISION_KEY = "retail"
+
+# Which divisions the UI will let someone reach. Kept separate from the enum so
+# pausing a business line is a one-line change rather than a data migration.
+ACTIVE_DIVISIONS = (Division.OFFICE,)
+
 
 def division_key(division: Division) -> str:
     for key, value in DIVISION_KEYS.items():
         if value == division:
             return key
-    return "mf"
+    return DEFAULT_DIVISION_KEY
 
 
 def resolve_division_key(key: str) -> Division:
-    return DIVISION_KEYS.get((key or "").strip().lower(), Division.MULTIFAMILY)
+    return DIVISION_KEYS.get((key or "").strip().lower(), DEFAULT_DIVISION)
 
 REDACTION_PATTERNS = [
     r"\b\d{3}-\d{2}-\d{4}\b",  # SSN

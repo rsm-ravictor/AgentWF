@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from aat_system import permission_repo, user_repo
 from aat_system.auth import assert_division_access, assert_folder_access, get_allowed_folders
 from aat_system.config import (
+    ACTIVE_DIVISIONS,
     CONSTRUCTION_FOLDERS,
     CORE_FOLDERS,
     ROLE_ORDER,
@@ -23,6 +24,7 @@ from aat_system.config import (
     Division,
     Permission,
     Role,
+    division_key,
     folders_for,
     has_permission,
     permissions_for,
@@ -355,9 +357,12 @@ def test_the_matrix_is_per_division_and_flags_what_changed(db):
     assert [r["key"] for r in permission_repo.matrix(db, MF)][0] == Role.GENERAL.value
 
 
-def test_every_division_appears_in_the_switcher():
+def test_only_the_active_divisions_appear_in_the_switcher():
+    """A paused business line keeps its permission rows but is not reachable —
+    otherwise an admin could administer a division no one is working in."""
     keys = [d["key"] for d in permission_repo.division_catalog()]
-    assert keys == ["mf", "retail", "construction"]
+    assert keys == [division_key(d) for d in ACTIVE_DIVISIONS]
+    assert keys == ["retail"]
 
 
 def test_the_role_catalog_reflects_a_live_change_in_its_division(db):
@@ -366,3 +371,40 @@ def test_the_role_catalog_reflects_a_live_change_in_its_division(db):
     assert catalog[Role.GENERAL.value]["permissions"] == [Permission.EDIT_WORKFLOW.value]
     unchanged = {r["key"]: r for r in user_repo.role_catalog(db, MF)}
     assert unchanged[Role.GENERAL.value]["permissions"] == permissions_for(Role.GENERAL)
+
+
+# ---------------- Signing in while a division is paused ----------------
+
+def test_an_account_from_a_paused_division_lands_in_the_active_one(db):
+    """The bug this covers: the login picker offers only Office/Retail, but
+    `resolve_session_user` returns the account's *stored* division — so signing
+    in with a Residential account silently landed the session in Residential,
+    a division nothing in the UI routes to."""
+    user_repo.seed_roster(db)
+    residential = user_repo.resolve_session_user(
+        db, "super.residential@aat.com", Division.OFFICE
+    )
+    assert residential.division == Division.MULTIFAMILY  # the row still says so
+
+    session_user = user_repo.session_division(db, residential, Division.OFFICE)
+    assert session_user.division == Division.OFFICE
+    # The level survives the move; only the division is overridden.
+    assert session_user.role == Role.SUPER_ADMIN
+
+
+def test_pausing_a_division_does_not_rewrite_its_roster(db):
+    """Un-pausing has to find its accounts where it left them, so the swap is a
+    property of the session and never of the stored row."""
+    user_repo.seed_roster(db)
+    user = user_repo.resolve_session_user(db, "super.residential@aat.com", Division.OFFICE)
+    user_repo.session_division(db, user, Division.OFFICE)
+
+    db.expire_all()
+    stored = db.query(User).filter(User.email == "super.residential@aat.com").first()
+    assert stored.division == Division.MULTIFAMILY
+
+
+def test_an_account_already_in_the_active_division_is_untouched(db):
+    user_repo.seed_roster(db)
+    user = user_repo.resolve_session_user(db, "super.retail@aat.com", Division.OFFICE)
+    assert user_repo.session_division(db, user, Division.OFFICE) is user

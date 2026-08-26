@@ -20,6 +20,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from .config import (
+    ACTIVE_DIVISIONS,
     DIVISION_LABELS,
     PERMISSION_LABELS,
     ROLE_DESCRIPTIONS,
@@ -161,8 +162,12 @@ def catalog() -> List[dict]:
 
 
 def division_catalog() -> List[dict]:
-    """Every division, for the switcher above the matrix."""
+    """The reachable divisions, for the switcher above the matrix.
+
+    Paused business lines are left out rather than deleted: their permission sets
+    and users stay in the database, but nothing in the UI routes to them.
+    """
     return [
         {"key": division_key(d), "value": d.value, "label": DIVISION_LABELS.get(d, d.value)}
-        for d in Division
+        for d in ACTIVE_DIVISIONS
     ]
