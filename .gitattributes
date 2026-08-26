@@ -1,0 +1,4 @@
+# core.autocrlf is on here, so Git expands LF to CRLF on checkout. Doing that
+# inside a binary corrupts it: a mock lease cloned on Windows would no longer
+# open as a PDF. Mark the binaries so Git leaves their bytes alone.
+*.pdf binary
