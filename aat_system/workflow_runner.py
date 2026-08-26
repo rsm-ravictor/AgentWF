@@ -519,7 +519,7 @@ def run(
             facts = step["bullets"]
             detail = step["summary"] or "Noted — this step has no automated action."
 
-        yield {
+        event = {
             "type": "step",
             "key": step["key"],
             "status": status,
@@ -527,6 +527,21 @@ def run(
             "detail": detail,
             "facts": facts,
         }
+        # The agreement travels with the step that found it, so the page can show
+        # the lease while the reading of it is still in flight. Without spans:
+        # nothing has been matched yet, and a highlight drawn before the match
+        # exists would be a guess.
+        if kind == "intake" and agreement and agreement.get("document"):
+            event["agreement"] = {
+                "filename": agreement["document"]["filename"],
+                "reason": agreement["reason"],
+                "text": agreement["text"],
+                "considered": agreement["considered"],
+                "spans": [],
+                "unlocatable": [],
+                "page_offsets": llm_analyzer.page_offsets(agreement.get("pages") or []),
+            }
+        yield event
 
     yield {
         "type": "outcome",

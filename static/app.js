@@ -659,6 +659,7 @@
       qs('#run-source').classList.add('hidden');
       qs('#run-extract').classList.add('hidden');
       qs('#run-step-count').textContent = '';
+      renderStepper();
       setStatus('', 'Not started.');
       qs('#run-progress-fill').style.width = '0%';
       setRunPill('idle', 'Idle');
@@ -773,6 +774,7 @@
     renderRubric();
     renderUseCaseState();
     renderRunFields();
+    renderStepper();
     renderRunHint();
   }
 
@@ -1670,7 +1672,9 @@
     );
 
     panel.classList.remove('hidden');
-    sweepMatches(spans);
+    // Only sweep when there is a match to sweep. The preview drawn at intake has
+    // no spans yet, and re-sweeping on every render would replay the animation.
+    if (spans.length) sweepMatches(spans);
   }
 
   // =========================================================================
@@ -1968,6 +1972,30 @@
 
   // ---- The status strip ----
 
+  // ---- The stepper: where the run has actually got to ----
+  //
+  // Built from the saved definition, like the diagram and the trail, so it
+  // cannot report a step the run does not execute. It reads the same
+  // state.runStatuses the diagram nodes do, so there is one source of progress
+  // rather than two that can disagree.
+
+  function renderStepper() {
+    const steps = (state.workflow && state.workflow.steps) || [];
+    const el = qs('#run-stepper');
+    if (!el) return;
+    el.innerHTML = steps
+      .map((step, i) => {
+        const status = state.runStatuses[step.key] || '';
+        const glyph = status === 'done' ? '✓' : status === 'blocked' ? '!' : String(i + 1);
+        return `
+          <li class="stepper-step ${status}" data-key="${esc(step.key)}">
+            <span class="stepper-dot">${glyph}</span>
+            <span class="stepper-label">${esc(step.title)}</span>
+          </li>`;
+      })
+      .join('');
+  }
+
   function setStatus(mode, text) {
     const strip = qs('#status-strip');
     if (!strip) return;
@@ -2080,6 +2108,7 @@
 
   function markStep(key, status) {
     state.runStatuses[key] = status;
+    renderStepper();
     qsa(`.node[data-key="${CSS.escape(key)}"]`).forEach((node) => {
       node.classList.remove('running', 'done', 'blocked');
       if (status) node.classList.add(status);
@@ -2105,6 +2134,7 @@
     qs('#run-output').classList.add('hidden');
     qs('#run-source').classList.add('hidden');
     qs('#run-extract').classList.add('hidden');
+    renderStepper();
     qs('#run-step-count').textContent = '';
     setStatus('running', isDocIntel() ? 'Locating the agreement…' : 'Starting…');
     qs('#run-progress-fill').style.width = '0%';
@@ -2178,6 +2208,9 @@
 
     if (event.type === 'step') {
       markStep(event.key, event.status === 'blocked' ? 'blocked' : 'done');
+      // A step that located the agreement hands it over here, so the lease is
+      // on screen while it is still being read rather than only afterwards.
+      if (event.agreement) renderLease(event.agreement);
       qs('#run-progress-fill').style.width = Math.round((completed / total) * 100) + '%';
       qs('#run-step-count').textContent = `Step ${completed} of ${total}`;
       setStatus(event.status === 'blocked' ? 'warn' : 'running', `${event.title} — ${event.detail}`);

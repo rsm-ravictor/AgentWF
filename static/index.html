@@ -320,51 +320,41 @@
         <!-- ---- EXECUTION: running it, and what the runs left behind ---- -->
         <div class="uc-pane hidden" id="uc-pane-execution">
 
-        <!-- The run card. Its boxes come from the use case's own run_inputs, and
-             the locate/upload toggle decides whether the agreement is found from
-             those values or handed over with the run. -->
-        <section class="panel uc-run search-card">
-          <div class="panel-head">
-            <h2 id="run-card-title">Run this use case</h2>
-            <span class="pill pill-idle" id="run-pill">Idle</span>
-          </div>
-          <p class="search-desc" id="run-card-desc"></p>
-
-          <div class="run-controls">
-            <div class="run-fields" id="run-fields"></div>
-
-            <div class="mode-toggle" id="run-mode" role="radiogroup" aria-label="How to supply the agreement">
-              <button type="button" data-mode="auto" class="active" role="radio" aria-checked="true">Auto-locate lease</button>
-              <button type="button" data-mode="manual" role="radio" aria-checked="false">Upload manually</button>
+        <!-- Enter it on the left, read it on the right. The lease appears as soon
+             as it is located, before anything has been matched in it. -->
+        <div class="di-top">
+          <section class="panel uc-run search-card">
+            <div class="panel-head">
+              <h2 id="run-card-title">Run this use case</h2>
+              <span class="pill pill-idle" id="run-pill">Idle</span>
             </div>
+            <p class="search-desc" id="run-card-desc"></p>
 
-            <div class="upload-zone" id="upload-zone">
-              <button type="button" class="filepick" id="run-filepick">
-                <svg class="icon"><use href="#i-upload"/></svg>
-                <span id="run-filename">Click to choose a lease PDF or text file</span>
-              </button>
-              <input id="run-file" type="file" class="hidden" />
+            <div class="run-controls">
+              <div class="run-fields" id="run-fields"></div>
+
+              <div class="mode-toggle" id="run-mode" role="radiogroup" aria-label="How to supply the agreement">
+                <button type="button" data-mode="auto" class="active" role="radio" aria-checked="true">Auto-locate lease</button>
+                <button type="button" data-mode="manual" role="radio" aria-checked="false">Upload manually</button>
+              </div>
+
+              <div class="upload-zone" id="upload-zone">
+                <button type="button" class="filepick" id="run-filepick">
+                  <svg class="icon"><use href="#i-upload"/></svg>
+                  <span id="run-filename">Click to choose a lease PDF or text file</span>
+                </button>
+                <input id="run-file" type="file" class="hidden" />
+              </div>
+
+              <div class="cta-row">
+                <button class="btn btn-primary btn-run" id="start-process">
+                  <svg class="icon"><use href="#i-play"/></svg> <span id="start-label">Start process</span>
+                </button>
+              </div>
             </div>
+            <p class="run-hint" id="run-hint"></p>
+          </section>
 
-            <div class="cta-row">
-              <button class="btn btn-primary btn-run" id="start-process">
-                <svg class="icon"><use href="#i-play"/></svg> <span id="start-label">Start process</span>
-              </button>
-            </div>
-          </div>
-          <p class="run-hint" id="run-hint"></p>
-        </section>
-
-        <!-- Live state of the run, in one line. -->
-        <div class="status-strip" id="status-strip">
-          <span class="status-dot"></span>
-          <span id="run-status-text" aria-live="polite">Not started.</span>
-          <span class="status-count" id="run-step-count"></span>
-        </div>
-        <div class="run-progress"><span id="run-progress-fill"></span></div>
-
-        <!-- The agreement as paper, beside what was read out of it. -->
-        <div class="run-results cols">
           <section class="panel lease-panel hidden" id="run-source">
             <div class="panel-head">
               <h2 id="run-source-title">Lease document</h2>
@@ -377,21 +367,28 @@
             <p class="lease-why" id="lease-why"></p>
             <div class="lease-jump" id="lease-jump"></div>
           </section>
-
-          <section class="panel extract-panel hidden" id="run-extract">
-            <div class="panel-head"><h2>Extracted details</h2></div>
-            <div class="extract-body" id="extract-body"></div>
-          </section>
         </div>
 
-        <!-- The drafted notice, editable before a person sends it. -->
+        <!-- Where the run has actually got to. One node per step of the saved
+             definition, so this cannot drift from what executes. -->
+        <ol class="stepper" id="run-stepper" aria-label="Run progress"></ol>
+        <div class="status-strip" id="status-strip">
+          <span class="status-dot"></span>
+          <span id="run-status-text" aria-live="polite">Not started.</span>
+          <span class="status-count" id="run-step-count"></span>
+        </div>
+        <div class="run-progress"><span id="run-progress-fill"></span></div>
+
+        <section class="panel extract-panel hidden" id="run-extract">
+          <div class="panel-head"><h2>Extracted details</h2></div>
+          <div class="extract-body" id="extract-body"></div>
+        </section>
+
         <section class="panel email-card hidden" id="run-output">
           <div class="panel-head"><h2 id="run-output-title">Generated incident notice</h2></div>
           <div class="run-outcome" id="run-outcome"></div>
         </section>
 
-        <!-- The full run, step by step. Folded away by default: the strip above
-             answers "where is it", and this answers "what exactly did it do". -->
         <details class="panel run-visual" id="run-visual">
           <summary class="panel-head">
             <h2>Run detail</h2>
