@@ -47,7 +47,11 @@ EXPENSIVE_MODELS: list[str] = [
 OAUTH_MODELS: list[str] = ["oauth-gpt"]
 
 # >>> SET THIS FROM THE Q1 ANSWER — the only line an agent may edit. <<<
-DEFAULT_MODEL = "claude-opus-4-6-v1"
+# The TritonAI team behind this deployment is entitled to a subset of the
+# catalogue: asking for claude-opus-4-6-v1 comes back 403
+# "team_model_access_denied", which surfaces as every run failing to read
+# anything. `list_models()` reports what the key can actually reach.
+DEFAULT_MODEL = "claude-sonnet-4-6"
 DEFAULT_SYSTEM = "You are a helpful assistant. Be concise."
 
 
@@ -166,6 +170,22 @@ def ask(
     return text
 
 
+# A deviation from the setup document, and the reason for it: some models on
+# the proxy answer a json_object request with the object wrapped in a markdown
+# fence. Pydantic then rejects a reply that was otherwise correct, and the run
+# reports that it could not read the document — a parsing failure disguised as
+# a reading failure. Stripping the fence is safe for a reply that has none.
+def _unfence(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+    # Drop the opening fence and its optional language tag, then the closer.
+    cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else ""
+    if cleaned.rstrip().endswith("```"):
+        cleaned = cleaned.rstrip()[: -len("```")]
+    return cleaned.strip()
+
+
 def ask_json(
     prompt: str | list[dict[str, str]],
     schema: type | None = None,
@@ -247,8 +267,7 @@ def ask_json(
             if server_model:
                 _log(f"[ask_json] server reported model: {server_model!r}")
 
-    if not text:
-        text = "{}"
+    text = _unfence(text) or "{}"
 
     if schema is not None and hasattr(schema, "model_validate_json"):
         return schema.model_validate_json(text)

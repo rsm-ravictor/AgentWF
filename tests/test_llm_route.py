@@ -55,11 +55,29 @@ def test_the_model_the_ui_reports_follows_the_provider(monkeypatch):
     assert direct.MODEL == "claude-opus-5"
 
 
-def test_the_configured_default_model_is_the_one_from_the_setup_interview():
-    # Changing this is a deliberate act, not a drive-by edit: it is the only line
-    # of connect.py the setup doc allows an agent to touch.
-    assert connect.DEFAULT_MODEL == "claude-opus-4-6-v1"
-    assert connect.DEFAULT_MODEL in connect.EXPENSIVE_MODELS
+def test_the_default_model_is_one_this_team_can_actually_reach():
+    """Changing this is a deliberate act, not a drive-by edit.
+
+    It was changed off claude-opus-4-6-v1 because this deployment's TritonAI team
+    is not entitled to it: every call came back 403 team_model_access_denied,
+    which presented as runs that could not read any document. `list_models()`
+    reports what the key can reach; this is one of those.
+    """
+    assert connect.DEFAULT_MODEL == "claude-sonnet-4-6"
+
+
+def test_a_fenced_json_reply_is_still_parsed():
+    """Some models on the proxy wrap a json_object reply in a markdown fence.
+
+    Rejecting those made a parsing failure look like a reading failure: the run
+    reported that it could not read the document, when the model had answered
+    correctly.
+    """
+    fence = chr(96) * 3
+    fenced = fence + 'json' + chr(10) + '{"a": 1}' + chr(10) + fence
+    assert connect._unfence(fenced) == '{"a": 1}'
+    assert connect._unfence('{"a": 1}') == '{"a": 1}'
+    assert connect._unfence("") == ""
 
 
 # ---------------- Credentials ----------------
