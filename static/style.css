@@ -1693,3 +1693,63 @@ textarea { resize: vertical; font-family: inherit; }
   .doc-intel .stepper-step::before,
   .doc-intel .stepper-step::after { display: none; }
 }
+
+/* ---- The run, read top to bottom ---------------------------------------
+   Context across the top, the stepper under it, then the document beside what
+   was read out of it. The three lookup values and the account are one act of
+   describing the incident, so they get the full width rather than a column;
+   the document and its details are the answer, so they share the row below.
+
+   The markup is left exactly where it is: the form and the document are
+   siblings inside `.di-top` because every other use case still wants them side
+   by side. So the row is dissolved with `display: contents` and the pane itself
+   becomes the grid — moving the elements in the HTML would have moved them for
+   everyone, which is the trap this shell keeps setting. */
+.doc-intel {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  grid-template-areas:
+    "context  context"
+    "stepper  stepper"
+    "status   status"
+    "progress progress"
+    "document details"
+    "output   output"
+    "visual   visual";
+  column-gap: 20px;
+  align-items: start;
+}
+.doc-intel .di-top { display: contents; }
+.doc-intel > .di-top > .uc-run { grid-area: context; }
+.doc-intel > .di-top > .lease-panel { grid-area: document; }
+.doc-intel > .stepper { grid-area: stepper; }
+.doc-intel > .status-strip { grid-area: status; }
+.doc-intel > .run-progress { grid-area: progress; }
+.doc-intel > .extract-panel { grid-area: details; }
+.doc-intel > .email-card { grid-area: output; }
+.doc-intel > .run-visual { grid-area: visual; }
+
+/* Full width, so the three lookups line up as one row and the account of the
+   incident takes the whole width beneath them rather than a sliver of it. */
+.doc-intel > .di-top > .uc-run .run-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.doc-intel > .di-top > .uc-run .run-controls { padding-block: 18px 4px; }
+
+/* The document is the tall thing on the page; the details beside it are short.
+   Sticking it to the top means scrolling the details does not scroll the
+   passage they are describing out of view. */
+.doc-intel > .di-top > .lease-panel { position: sticky; top: 12px; }
+.doc-intel .lease-panel-body { position: static; }
+
+@media (max-width: 1180px) {
+  .doc-intel {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "context" "stepper" "status" "progress" "document" "details" "output" "visual";
+  }
+  .doc-intel > .di-top > .lease-panel { position: static; }
+}
+@media (max-width: 720px) {
+  .doc-intel > .di-top > .uc-run .run-fields { grid-template-columns: minmax(0, 1fr); }
+}

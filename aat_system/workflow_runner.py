@@ -11,6 +11,10 @@ Each step's `kind` decides what actually happens:
               ones that are there so later steps have them
     analysis  grade an attached document against the rubric (real model call),
               or report what is on file when nothing was attached
+    requirements
+              read an agreement into the checklist it demands (a model call)
+    match     answer that checklist against the document on file, line by line
+              (a second model call)
     draft     write the correspondence the reading calls for, quoting the
               documents verbatim (a second model call)
     decision  apply the pass rule to everything gathered so far
@@ -33,7 +37,14 @@ from typing import Iterator, Optional
 import anthropic
 from sqlalchemy.orm import Session
 
-from . import approval_repo, clause_search, llm_analyzer, workflow_catalog, workflow_repo
+from . import (
+    approval_repo,
+    clause_search,
+    coverage_match,
+    llm_analyzer,
+    workflow_catalog,
+    workflow_repo,
+)
 from .config import Division
 
 
@@ -84,6 +95,60 @@ def _read_on_file(db: Session, checked: dict) -> dict:
             continue
         files.append({**archived, "name": item["name"]})
     return llm_analyzer.build_context(files)
+
+
+def _paged(db: Session, document_id: int) -> tuple:
+    """Re-open a chosen document for its pages and the hash of its bytes.
+
+    `select_agreement` answers *which* document and hands back its text; two
+    things it does not hand back are needed here. The pages are what let a mark
+    be reported on the page a person would find it on, and the hash of the bytes
+    is the document's identity in the coverage register — a certificate re-sent
+    under a new filename is not a new certificate.
+    """
+    archived = workflow_repo.archived_file(db, document_id)
+    if archived is None:
+        return [], ""
+    try:
+        pages = llm_analyzer.document_pages(
+            archived["content"], archived["media_type"], archived["filename"]
+        )
+    except Exception:
+        pages = []  # the text was already read; pagination is a presentation aid
+    return pages, workflow_repo.content_hash(archived["content"])
+
+
+def _insured_matches(party: str, insured: str) -> bool:
+    """Whether the certificate's named insured looks like the party the lease binds.
+
+    Deliberately generous. The two are almost never written identically — a
+    lease says "Coastal Retail Group LLC" and a certificate adds a suite and a
+    city — so this asks only whether the distinguishing words of the party
+    appear at all. Anything stricter would flag every certificate on file.
+
+    Reported to a person as something to check, never used to mark a line met or
+    missing: a name this cannot reconcile is a question, not a finding.
+    """
+    if not (party or "").strip() or not (insured or "").strip():
+        return True  # nothing to compare is not a mismatch
+    tokens = clause_search._tokens(party)
+    if not tokens:
+        return True
+    haystack = clause_search._normalise(insured)
+    return any(token in haystack for token in tokens)
+
+
+def _coverage_document(source: dict, spans: dict) -> dict:
+    """One of the two instruments, in the shape the page renders it from."""
+    return {
+        "filename": source["document"]["filename"],
+        "reason": source["reason"],
+        "text": source["text"],
+        "considered": source.get("considered") or [],
+        "page_offsets": llm_analyzer.page_offsets(source.get("pages") or []),
+        "spans": spans.get("spans") or [],
+        "unlocatable": spans.get("unlocatable") or [],
+    }
 
 
 def run(
@@ -142,9 +207,27 @@ def run(
     property_id = property_id or (answers.get("property_id") or "").strip()
     unit = unit or (answers.get("unit") or "").strip()
 
+    # Read off the definition rather than off the workflow id: a use case that
+    # declares these steps gets this behaviour, and one that does not runs
+    # exactly as it always has. The same reason the clause path keys on a
+    # declared `clause_query` instead of naming Clause Search.
+    coverage_mode = any(s["kind"] in ("requirements", "match") for s in steps)
+
     checked: Optional[dict] = None
     agreement = None
     clause_result = None
+    # Insurance Coverage Matching's own state. Two documents rather than one, and
+    # a checklist that is built by one step and answered by the next.
+    lease = None
+    certificate = None
+    requirements = None
+    coverage = None
+    rows: list = []
+    counts: dict = {}
+    lease_spans = {"spans": [], "unlocatable": []}
+    policy_spans = {"spans": [], "unlocatable": []}
+    requirements_failed = ""
+    match_failed = ""
     clause_failed = ""
     highlight = {"spans": [], "unlocatable": []}
     context = {"text": "", "included": [], "skipped": []}

@@ -20,6 +20,7 @@ Also here:
 """
 
 import csv
+import hashlib
 import io
 import json
 import mimetypes
@@ -32,7 +33,14 @@ from sqlalchemy.orm import Session
 
 from . import workflow_catalog
 from .config import ARCHIVE_ROOT, Division, division_key as _division_key
-from .models import Document, Folder, WorkflowRecord, WorkflowRevision, WorkflowStep
+from .models import (
+    CoverageRegister,
+    Document,
+    Folder,
+    WorkflowRecord,
+    WorkflowRevision,
+    WorkflowStep,
+)
 
 # Extensions that count as a "record file" a user would want to open rather than
 # treat as evidence to be graded.
@@ -247,7 +255,7 @@ OFFICE_CATALOG = {
             },
             {
                 "name": "incident_summary",
-                "label": "Incident summary",
+                "label": "Context",
                 "type": "textarea",
                 "role": "clause_query",
                 "placeholder": "What happened, where, and when. Written the way it was reported.",
@@ -582,53 +590,89 @@ DEFAULT_STEPS = {
             ],
         },
     ],
+    # Two instruments in, one letter out. The steps mirror the order the work
+    # actually happens in, and the two middle ones are the reason this use case
+    # exists: the lease is read into a checklist *before* the certificate is
+    # opened, so what is required cannot be shaped by what was supplied.
     "coverage-matching": [
         {
-            "title": "Read the governing agreement",
+            "title": "Take in the lease and the certificate",
             "kind": "intake",
-            "summary": "Pull the agreement that sets the coverage obligation, and the matrix built from it.",
+            "summary": "Find the lease that sets the obligation, and the certificate that answers it.",
             "bullets": [
-                "Finds the lease, contract or agreement that names the required coverage.",
-                "Finds the coverage matrix that turns those terms into a checklist.",
-                "Property ID and unit identify which tenancy or vendor this run is about.",
+                "The company, property and unit given identify one tenancy, and locate the lease in Lease Agreements.",
+                "The certificate is located in Vendor Insurances, or taken from the file uploaded with the run.",
+                "The lease is excluded from the certificate search, so a run cannot check a lease against itself.",
+                "Both documents are read into the run, so every later step quotes out of the source rather than out of a summary.",
             ],
         },
         {
-            "title": "Grade the policy against the matrix",
-            "kind": "analysis",
-            "summary": "Compare what the submitted policy actually provides against each required line.",
+            "title": "Read the lease into a checklist",
+            "kind": "requirements",
+            "summary": "Turn the lease's insurance clauses into one checkable line per obligation.",
             "bullets": [
-                "Identifiers are redacted before the policy is read.",
-                "Each required coverage line comes back met, not met, or unclear, with a quote.",
-                "Limits, endorsements and the policy period are extracted for comparison.",
+                "The whole lease is read, not one section — certificate and additional-insured duties routinely sit apart from the limits.",
+                "A sentence carrying several duties becomes several lines: a clause requiring $2M per occurrence, $4M aggregate and three named insureds is five lines, not one.",
+                "Each line carries the section number the lease gives it and the words that impose it, quoted exactly.",
+                "Where the lease states a dollar figure it is captured as a number, which is what a shortfall is later measured against.",
+                "The certificate is not in view at this step, so the checklist cannot be shaped by what the tenant happened to send.",
             ],
         },
         {
-            "title": "Match or flag the gap",
+            "title": "Check the certificate against every line",
+            "kind": "match",
+            "summary": "Answer each line: carried, carried but short, absent, or not confirmable.",
+            "bullets": [
+                "Every line is answered. A line the certificate is silent about is missing — that silence is the finding.",
+                "Short is distinguished from missing: coverage below the required limit is a different conversation from coverage that is not there.",
+                "Amounts are compared as amounts, and a per-occurrence limit is not read as an aggregate.",
+                "The named insured is checked against the party the lease binds — a certificate for another entity satisfies nothing.",
+                "Each answer quotes the words of the certificate that support it, and those words are located and marked in the document.",
+                "A line the certificate does not let you settle comes back unconfirmed, never as satisfied.",
+            ],
+        },
+        {
+            "title": "Draft the deficiency notice",
+            "kind": "draft",
+            "summary": "Write the tenant the letter the gaps call for, grouped by what is actually wrong.",
+            "bullets": [
+                "What is below the required amount is listed with both figures — what the lease requires and what the certificate shows.",
+                "What is missing entirely is listed separately, because it is a different ask.",
+                "What is already in good standing is named, briefly, so the tenant does not re-send it.",
+                "Every requirement asserted is quoted from the lease with its section number.",
+                "Anything the lease or the certificate did not support is listed as unresolved instead of being written into the body.",
+                "Nothing is sent. The draft is output, not correspondence.",
+            ],
+        },
+        {
+            "title": "Clear only when every line is carried",
             "kind": "decision",
-            "summary": "Clear only when every required line is matched by the policy on file.",
+            "summary": "Pass only where the certificate answers every line the lease requires.",
             "bullets": [
-                "A missing required coverage line fails.",
-                "A limit below what the agreement requires fails.",
-                "A line the policy does not clearly address is treated as unmet, never as satisfied.",
+                "A missing required coverage fails.",
+                "A limit below what the lease requires fails.",
+                "A line that could not be confirmed from the certificate is held, never counted as met.",
+                "A certificate whose named insured is not the party the lease binds fails outright.",
             ],
         },
         {
             "title": "Hand the gaps to a person",
             "kind": "human",
-            "summary": "Queue the mismatch for sign-off, naming each line that did not match.",
+            "summary": "Queue the deficiencies for sign-off, naming each line that did not answer.",
             "bullets": [
-                "The approval case lists the required line and what the policy actually said.",
-                "A gap on an active tenancy or vendor escalates rather than waiting.",
+                "The approval case carries the drafted notice and every line that failed, with the required figure against the figure found.",
+                "A gap on an active tenancy escalates rather than waiting for the next renewal cycle.",
             ],
         },
         {
-            "title": "Record the match",
+            "title": "Record what was checked",
             "kind": "record",
-            "summary": "Log which lines matched and which did not.",
+            "summary": "Log the pairing, the two expiry dates, and which lines were not carried.",
             "bullets": [
                 "One row per run, exported as the record file.",
-                "Later runs read those rows when deciding whether a gap is recurring.",
+                "The pairing is written to the coverage register: who, where, which lease against which certificate, and what was outstanding.",
+                "The register is keyed on the content of both documents, so the same lease under a new filename is recognised as the same lease, and an amended certificate is recognised as new and checked again.",
+                "Lease and policy expiry are stored as the documents state them, so the audit can watch them without re-reading every lease.",
             ],
         },
     ],
@@ -1370,6 +1414,138 @@ def log_record(
     db.commit()
     db.refresh(record)
     return record
+
+
+# ---------------- The coverage register ----------------
+#
+# `log_record` writes what every use case writes: one row saying a run happened
+# and how it came out. The register is the other half of Insurance Coverage
+# Matching's record step — the columns a later run, or the audit, has to be able
+# to read without re-reading the lease.
+
+def content_hash(content: bytes) -> str:
+    """The identity of a document, taken from its bytes rather than its name.
+
+    A tenant who re-sends the same certificate under a new filename has not sent
+    a new certificate, and a genuinely amended one is a new document even if the
+    filename never changed. Hashing the content is what tells those apart, and it
+    is what stops a sweep re-checking the same pairing every night.
+    """
+    return hashlib.sha256(content or b"").hexdigest()
+
+
+def coverage_pairing(
+    db: Session, division: Division, lease_hash: str, policy_hash: str
+) -> Optional[CoverageRegister]:
+    """The register row for this exact pair of documents, if it has been checked.
+
+    Both hashes, not one: the same lease against an amended certificate is a
+    pairing nobody has checked yet, and that is exactly the case a sweep must
+    not skip.
+    """
+    if not (lease_hash and policy_hash):
+        return None
+    return (
+        db.query(CoverageRegister)
+        .filter(
+            CoverageRegister.division == division,
+            CoverageRegister.lease_hash == lease_hash,
+            CoverageRegister.policy_hash == policy_hash,
+        )
+        .one_or_none()
+    )
+
+
+def log_coverage(
+    db: Session,
+    workflow_id: str,
+    division: Division,
+    party: str = "",
+    property_id: str = "",
+    unit: str = "",
+    lease_document: str = "",
+    lease_hash: str = "",
+    policy_document: str = "",
+    policy_hash: str = "",
+    lease_expiration: str = "",
+    policy_expiration: str = "",
+    carrier: str = "",
+    policy_number: str = "",
+    requirement_total: int = 0,
+    requirement_met: int = 0,
+    missing: Optional[List[str]] = None,
+    checked_by: str = "",
+) -> CoverageRegister:
+    """Write what this check established about one tenancy's coverage.
+
+    Re-checking a pairing overwrites its row rather than adding a second one.
+    The register answers "where does this tenancy stand", which has one answer;
+    the history of runs is what `log_record` already keeps. Two rows for one
+    pairing would make the audit have to pick between them.
+
+    `result` is derived here rather than passed in, so the word in the column and
+    the counts beside it cannot disagree.
+    """
+    outstanding = list(dict.fromkeys(missing or []))
+    row = coverage_pairing(db, division, lease_hash, policy_hash)
+    if row is None:
+        row = CoverageRegister(division=division, lease_hash=lease_hash or None,
+                               policy_hash=policy_hash or None)
+        db.add(row)
+
+    row.workflow_id = workflow_id
+    row.party = party or None
+    row.property_id = property_id or None
+    row.unit = unit or None
+    row.lease_document = lease_document or None
+    row.policy_document = policy_document or None
+    row.lease_expiration = lease_expiration or None
+    row.policy_expiration = policy_expiration or None
+    row.carrier = carrier or None
+    row.policy_number = policy_number or None
+    row.requirement_total = requirement_total
+    row.requirement_met = requirement_met
+    row.result = "complete" if not outstanding else "gaps"
+    row.missing = json.dumps(outstanding) if outstanding else None
+    row.checked_at = datetime.utcnow()
+    row.checked_by = checked_by or None
+
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def coverage_register(db: Session, division: Division, limit: int = 200) -> List[dict]:
+    """Every pairing checked in this division, most recently checked first."""
+    rows = (
+        db.query(CoverageRegister)
+        .filter(CoverageRegister.division == division)
+        .order_by(CoverageRegister.checked_at.desc(), CoverageRegister.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "workflow_id": r.workflow_id,
+            "party": r.party or "",
+            "property_id": r.property_id or "",
+            "unit": r.unit or "",
+            "lease_document": r.lease_document or "",
+            "policy_document": r.policy_document or "",
+            "lease_expiration": r.lease_expiration or "",
+            "policy_expiration": r.policy_expiration or "",
+            "carrier": r.carrier or "",
+            "policy_number": r.policy_number or "",
+            "requirement_total": r.requirement_total,
+            "requirement_met": r.requirement_met,
+            "result": r.result,
+            "missing": json.loads(r.missing) if r.missing else [],
+            "checked_at": r.checked_at.isoformat() if r.checked_at else None,
+            "checked_by": r.checked_by or "",
+        }
+        for r in rows
+    ]
 
 
 def list_records(db: Session, workflow_id: str, division: Division, limit: int = 200) -> List[dict]:

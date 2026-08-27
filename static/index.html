@@ -358,6 +358,17 @@
           <section class="panel lease-panel hidden" id="run-source">
             <div class="panel-head">
               <h2 id="run-source-title">Lease document</h2>
+              <!-- Coverage matching reads two instruments in one run, and the
+                   viewport can only hold one. The switcher is how a person gets
+                   back to the lease after the certificate has taken the panel
+                   over; it stays hidden for a use case that reads one document. -->
+              <div class="doc-switch hidden" id="doc-switch" role="tablist"
+                   aria-label="Which document is showing">
+                <button type="button" class="active" data-doc="lease"
+                        role="tab" aria-selected="true">Lease</button>
+                <button type="button" data-doc="certificate"
+                        role="tab" aria-selected="false">Certificate</button>
+              </div>
               <span class="ws-count" id="lease-file"></span>
             </div>
             <div class="lease-panel-body">
@@ -366,6 +377,22 @@
             </div>
             <p class="lease-why" id="lease-why"></p>
             <div class="lease-jump" id="lease-jump"></div>
+          </section>
+
+          <!-- The checklist the lease demands. Drawn while the certificate is
+               still unread, every line pending, and resolved one at a time as
+               the answers come back — so what the lease asked for is on screen
+               before anything has judged it. Hidden for every other use case. -->
+          <section class="panel checklist-panel hidden" id="run-checklist">
+            <div class="panel-head">
+              <h2>Insurance requirement checklist</h2>
+              <span class="ws-count" id="checklist-count"></span>
+            </div>
+            <div class="checklist-body" id="checklist-body">
+              <div class="checklist-summary hidden" id="checklist-summary"></div>
+              <div class="checklist-items" id="checklist-items"></div>
+              <p class="checklist-empty" id="checklist-empty">Waiting for the lease to be read.</p>
+            </div>
           </section>
         </div>
 
